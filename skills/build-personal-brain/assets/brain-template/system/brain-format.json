@@ -1,0 +1,18 @@
+{
+  "format": "personal-brain",
+  "version": 1,
+  "knowledge_roots": [
+    "profile",
+    "projects",
+    "rules",
+    "links",
+    "journal",
+    "inferred"
+  ],
+  "non_canonical_roots": [
+    "inbox",
+    "system",
+    "work",
+    "examples"
+  ]
+}

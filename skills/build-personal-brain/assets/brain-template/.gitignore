@@ -1,0 +1,12 @@
+work/setup/state.json
+work/setup/events.jsonl
+work/setup/inventory.jsonl
+work/setup/inventory-summary.md
+work/setup/source-roots.json
+work/setup/operation.lock
+work/setup/transactions/
+work/setup/snapshots/
+work/setup/backups/
+.brain-history/
+*.tmp
+__pycache__/

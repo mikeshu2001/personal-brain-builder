@@ -1,0 +1,35 @@
+# Credentials and identity stores
+.env
+.env.*
+*.pem
+*.key
+*.p12
+*.pfx
+credentials*
+auth.json
+secrets
+**/secrets/**
+.ssh
+**/.ssh/**
+
+# Application and system data
+.git
+node_modules
+.venv
+venv
+__pycache__
+.cache
+Library
+AppData
+
+# Heavy or derived files
+*.zip
+*.tar
+*.gz
+*.7z
+*.dmg
+*.iso
+*.mp4
+*.mov
+*.mkv
+*.avi

@@ -1,0 +1,4 @@
+interface:
+  display_name: "Build Personal Brain"
+  short_description: "Build a safe cross-project personal memory"
+  default_prompt: "Use $build-personal-brain to guide me from first setup to a working shared memory."
