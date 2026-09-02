@@ -200,6 +200,13 @@ opened or changed merely by reading this repository.
 
 Подробный пользовательский вход: [START-HERE.md](START-HERE.md).
 
+## Об авторе
+
+Меня зовут Михаил Шумовский. Я автор телеграм-канала
+[«Миша, давай по новой»](https://t.me/misha_davai_po_novoi), главный редактор
+[«Нейромедиа»](https://neiro.unisender.com/) и помогаю людям осваивать
+нейросети в клубе [«Нейроцех»](https://neurozeh.ru/).
+
 ## License
 
 [MIT](LICENSE)
