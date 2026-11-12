@@ -11,6 +11,18 @@ This file is operating material for an agent. It is not user knowledge.
 5. Do not treat `system/`, `work/`, `examples/`, or unresolved `inbox/`
    content as current knowledge.
 
+## Delegated workers
+
+A subagent or headless worker on a narrow delegated brief skips this memory
+unless the brief names cards to read. A worker cannot tell that its brief is
+narrow unless the brief says so.
+
+1. When you delegate, say in the first line that this is a narrow delegated
+   brief, then pass the context the worker needs.
+2. Name exact cards only when the worker needs stored knowledge.
+3. When you are a worker on such a brief and it names no cards, do the task
+   without opening this memory.
+
 ## Choose current knowledge
 
 1. Current explicit user instructions override stored memory.

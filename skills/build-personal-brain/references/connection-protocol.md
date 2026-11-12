@@ -31,7 +31,9 @@ Use generic, unique markers:
 ## Personal brain
 
 The private cross-project memory root is `${BRAIN_ROOT}`.
-For substantive tasks, read `${BRAIN_ROOT}/system/runner-contract.md` first.
+A subagent or headless worker on a narrow delegated brief skips this memory
+unless the brief names cards to read; the delegating agent passes the context.
+For other substantive tasks, read `${BRAIN_ROOT}/system/runner-contract.md` first.
 Load the compact active profile core before a small task-specific packet.
 Never treat `work/**`, `inbox/**`, system files, or examples as user knowledge.
 Never apply a closed card as current; follow its replacement chain.
@@ -147,9 +149,18 @@ For a substantive task, every connected agent must:
 Skip brain retrieval for clearly context-free operations. Do not turn the
 bootstrap into a visible ritual or ask the user to name every relevant source.
 
+Hosts load their global instructions into subagents and headless workers too,
+so without an exception every spawned worker repeats the start-up reads and
+usually opens no card. A worker on a narrow delegated brief therefore skips
+the brain unless the brief names cards to read. The delegating agent states
+in the first line that the brief is narrow and passes the needed context.
+
 Agents must share the files, not hidden per-agent summaries. If a host provides
 its own memory feature, treat it as a cache or capture source, never as a
-higher-authority replacement for the curated brain.
+higher-authority replacement for the curated brain. Tell the owner that such a
+feature keeps working separately: what one assistant stores there is invisible
+to the others and reaches the shared memory only through the explicit
+remember flow.
 
 ## Health checks
 

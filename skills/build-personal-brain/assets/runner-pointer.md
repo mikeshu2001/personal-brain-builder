@@ -5,7 +5,9 @@
 
 The private cross-project memory root is `{{BRAIN_ROOT}}`.
 
-For every substantive task:
+A subagent or headless worker on a narrow delegated brief skips this memory
+unless the brief names cards to read; the delegating agent passes the context
+it needs. For every other substantive task:
 
 1. Read `{{BRAIN_ROOT}}/system/runner-contract.md`.
 2. Load the compact active profile before a small task-specific packet.

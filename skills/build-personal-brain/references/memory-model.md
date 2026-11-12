@@ -220,6 +220,9 @@ Do not preload the whole brain or run a long universal checklist for every
 request. Context economy is part of correctness: irrelevant memory can change
 an answer as surely as missing memory.
 
+A subagent or headless worker on a narrow delegated brief does not repeat this
+retrieval. The delegating agent passes the context or names the exact cards.
+
 ## Registry and indexes
 
 Maintain one compact registry that maps projects and capabilities to their

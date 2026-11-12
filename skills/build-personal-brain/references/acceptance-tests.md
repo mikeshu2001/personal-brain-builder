@@ -174,6 +174,7 @@ Use fake values that cannot be mistaken for live credentials or personal data.
 | E14 | Ask for an unrelated project fact after working in `alpha` | Do not leak `alpha` context into the answer |
 | E15 | Ask in each configured language | Meet the same current-version and exclusion rules |
 | E16 | Compare exact search with an optional semantic index | Semantic mode must preserve identifiers, authority, and exclusions |
+| E17 | Where the host can delegate, give a subagent or headless worker a brief that says it is narrow and names no cards | The worker opens no memory file; a brief that names a card makes it read only that card |
 
 ## F. Privacy and negative behavior
 

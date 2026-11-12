@@ -60,7 +60,7 @@ policy references   Python control plane
 | --- | --- |
 | [`SKILL.md`](skills/build-personal-brain/SKILL.md) | Routes first-run, resume, audit, connection, acceptance, and maintenance work; loads only the references needed for the current stage. |
 | [`references/`](skills/build-personal-brain/references) | Defines the user dialogue, safety boundaries, operational state machine, audit protocol, memory model, connection protocol, and acceptance criteria. |
-| [`brainctl.py`](skills/build-personal-brain/scripts/brainctl.py) | Provides the deterministic CLI for initialization, scoped inventory, consent records, validation, history, and bounded host connections. |
+| [`brainctl.py`](skills/build-personal-brain/scripts/brainctl.py) | Provides the deterministic CLI for initialization, scoped inventory, consent records, validation, history, bounded host connections, and upgrades of an existing memory's operating files. |
 | [`state_control.py`](skills/build-personal-brain/scripts/state_control.py) | Validates durable state, legal transitions, permission scope, resume points, and the final readiness gate. |
 | [`card_engine.py`](skills/build-personal-brain/scripts/card_engine.py) | Validates and searches knowledge cards, including provenance, authority, freshness, secret detection, and supersession chains. |
 | [`portable_history.py`](skills/build-personal-brain/scripts/portable_history.py) | Implements dependency-free, content-addressed local history with exact-path saves, locking, atomic publication, undo, and interrupted-operation recovery. |
@@ -92,7 +92,7 @@ boundaries and responsible-reporting guidance.
 ## Verification
 
 The test suite uses only Python's standard library. At this revision, all
-**81 tests pass locally on Python 3.9.6**:
+**88 tests pass locally on Python 3.9.6**:
 
 ```bash
 python -m unittest discover -s tests -v
@@ -107,7 +107,9 @@ The suite exercises:
   supersession failures;
 - exact-path history saves, byte-and-mode restoration, stale locks, and crash
   recovery;
-- connection preview/apply/remove round trips and stale-confirmation refusal.
+- connection preview/apply/remove round trips and stale-confirmation refusal;
+- operating-file upgrade of a finished memory: preview, apply, refusals, an
+  interrupted run, and the recheck path back to a ready memory.
 
 [GitHub Actions](.github/workflows/tests.yml) runs the same suite on Python
 3.9, 3.11, and 3.13. There are no third-party runtime or test dependencies to
@@ -128,6 +130,23 @@ The assistant should stop immediately if it cannot work with local files. No
 source folder, personal document, generated memory, or assistant setting is
 opened or changed merely by reading this repository.
 
+## Upgrading an existing memory
+
+A finished memory keeps its own copy of the runner contract, the connection
+text, and the control scripts, so it does not change when this repository
+does. To update it, download the current builder, open it with your assistant,
+and send:
+
+> My personal memory is already built. Update its operating files to this
+> version of the builder. Show me what will change and ask for my permission
+> first.
+
+The assistant previews the exact files, applies them as one local-history
+revision only after approval, and then repeats the acceptance checks and
+verifies each connected assistant again. Knowledge cards and the
+owner profile are not touched. [CHANGELOG.md](CHANGELOG.md) lists what each
+release changes.
+
 ## Repository map
 
 ```text
@@ -139,7 +158,8 @@ opened or changed merely by reading this repository.
 |   |-- references/                # staged operating policies
 |   |-- scripts/                   # deterministic control plane
 |   `-- assets/brain-template/     # empty generated-memory template
-|-- tests/                         # 81 synthetic unittest cases
+|-- tests/                         # 88 synthetic unittest cases
+|-- CHANGELOG.md
 |-- SECURITY.md
 `-- PRIVACY.md
 ```
@@ -156,6 +176,18 @@ opened or changed merely by reading this repository.
   Inspect and remove it before manually archiving or sharing the used checkout.
 - This repository provides the builder and validation machinery, not hosted
   storage, cloud sync, or a semantic vector database.
+- An assistant's own memory feature, such as Claude Code auto memory or Codex
+  memories, keeps working separately. What one assistant stores there is not
+  visible to the others; shared knowledge goes through the explicit remember
+  flow.
+- A memory built before version 1.1.0 keeps its original contract and
+  connection text until its owner runs the upgrade described above.
+
+## Feedback
+
+If you built a memory with this builder, tell how it went in
+[Discussions](https://github.com/mikeshu2001/personal-brain-builder/discussions):
+which assistant you use, what worked, and what got in the way.
 
 ## Русская инструкция
 
@@ -199,6 +231,28 @@ opened or changed merely by reading this repository.
   указатель.
 
 Подробный пользовательский вход: [START-HERE.md](START-HERE.md).
+
+### Как обновить уже созданную память
+
+Готовая память сама не обновляется. Скачайте новую версию этой папки и
+отправьте нейросети:
+
+> Вот новая версия системы общей памяти:
+> https://github.com/mikeshu2001/personal-brain-builder
+>
+> Моя память уже создана. Обнови её служебную часть до этой версии. Сначала
+> покажи, что изменится, и спроси моё разрешение.
+
+Помощник покажет список изменений и дождётся согласия. Записи о ваших проектах
+и правилах останутся прежними. После обновления он заново проверит память и
+каждую подключённую программу. Что изменилось в версиях, записано в
+[CHANGELOG.md](CHANGELOG.md).
+
+### Расскажите, как пользуетесь
+
+Собрали память этим набором? Напишите в
+[обсуждениях](https://github.com/mikeshu2001/personal-brain-builder/discussions):
+с какой нейросетью работаете, что получилось и что мешало.
 
 ## Об авторе
 
