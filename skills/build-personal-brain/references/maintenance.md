@@ -315,7 +315,9 @@ another assistant or to repair a connection:
 When an instruction file was edited after connection, validation reports that
 it no longer matches its verified bytes. Remove that connection through the
 reviewed removal flow while the memory is `READY`, then reopen connection
-review and connect it again. Text outside the managed block is preserved.
+review and connect it again. Text outside the managed block is preserved. If
+the block itself was deleted, the removal changes nothing in the file and
+only clears the stale connection record.
 
 Adding a new work folder to a finished memory has no supported path yet. Say
 so instead of improvising one.

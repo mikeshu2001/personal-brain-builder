@@ -173,7 +173,8 @@ A host file that changed outside the block after connection no longer matches
 its verified bytes, and the memory fails validation until that is resolved.
 Remove the connection through the reviewed removal, reopen connection review,
 and connect the host again; the removal and the new preview both preserve
-every byte outside the managed region.
+every byte outside the managed region. When the managed region itself is
+gone, the removal leaves the file as it is and clears the connection record.
 
 ## Health checks
 

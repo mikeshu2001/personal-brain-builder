@@ -162,14 +162,32 @@ def _history_path(root: Path) -> Path:
 
 
 # A file manager drops these files into any folder the owner opens. They are
-# not memory content: the working-tree scan skips them, so opening the memory
-# in Finder or Explorer cannot turn it into an unsaved state. The names stay
-# valid history paths because an older revision may still list one.
+# not memory content: the working-tree scan never reads them, so opening the
+# memory in Finder or Explorer cannot turn it into an unsaved state. The names
+# stay valid history paths because an older revision may still list one.
 OS_METADATA_NAMES = frozenset({".ds_store", "thumbs.db", "desktop.ini"})
 
 
 def is_os_metadata_name(name: str) -> bool:
     return name.casefold() in OS_METADATA_NAMES
+
+
+def _with_listed_os_metadata(
+    scanned: Mapping[str, Mapping[str, Any]],
+    reference: Mapping[str, Mapping[str, Any]],
+) -> Dict[str, Dict[str, Any]]:
+    """Carry a reference manifest's file-manager entries into a scan result.
+
+    A revision written by an older scan may list such a file. Its entry is
+    carried forward unchanged, whatever the file manager did to the file since,
+    so every comparison and every new manifest stays consistent with history.
+    """
+
+    merged = {path: dict(entry) for path, entry in scanned.items()}
+    for path, entry in reference.items():
+        if is_os_metadata_name(path.rsplit("/", 1)[-1]):
+            merged[path] = dict(entry)
+    return dict(sorted(merged.items()))
 
 
 def _is_excluded_parts(parts: Tuple[str, ...]) -> bool:
@@ -847,12 +865,9 @@ def _inspect_unlocked(
 ]:
     head, chain, manifests = _load_chain(history)
     head_revision = chain[0][1]
-    head_entries = {
-        path: entry
-        for path, entry in manifests[head_revision["manifest"]].items()
-        if not is_os_metadata_name(path.rsplit("/", 1)[-1])
-    }
+    head_entries = manifests[head_revision["manifest"]]
     current_entries, current_blobs = _scan_tree(root)
+    current_entries = _with_listed_os_metadata(current_entries, head_entries)
     changes = _diff_entries(head_entries, current_entries)
     result = {
         "integrity": "ok",
@@ -1507,6 +1522,7 @@ def _rollback_undo(
         except OSError:
             pass
     restored, _blobs = _scan_tree(root)
+    restored = _with_listed_os_metadata(restored, current_entries)
     if restored != dict(sorted(current_entries.items())):
         raise HistoryError("Undo rollback could not restore the previous manifest")
 
@@ -1611,6 +1627,7 @@ def _recovery_plan(
     }
     live_entries, _live_blobs = _scan_tree(root)
     head_entries = manifests[revisions[head]["manifest"]]
+    live_entries = _with_listed_os_metadata(live_entries, head_entries)
     clean = live_entries == dict(sorted(head_entries.items()))
 
     action: Optional[str] = None
@@ -2028,6 +2045,7 @@ def undo_apply(
                 )
 
             restored, _restored_blobs = _scan_tree(brain_root)
+            restored = _with_listed_os_metadata(restored, target_entries)
             if restored != dict(sorted(target_entries.items())):
                 raise HistoryError("Undo result does not match target manifest")
 

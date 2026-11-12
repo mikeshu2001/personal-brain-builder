@@ -179,8 +179,27 @@ class PortableHistoryTests(unittest.TestCase):
         (self.root / ".DS_Store").write_bytes(b"listed by an older scan")
         # A revision written before these names were skipped may list one.
         with mock.patch.object(history, "is_os_metadata_name", return_value=False):
-            self.initialize()
+            first = self.initialize()
         self.assertTrue(history.inspect(self.root)["clean"])
+
+        # The file manager keeps rewriting its file; the memory moves on.
+        (self.root / ".DS_Store").write_bytes(b"rewritten by the file manager")
+        (self.root / "profile" / "later.md").write_bytes(b"# Later\n")
+        history.save(
+            self.root,
+            expected_paths=["profile/later.md"],
+            summary="Save one card on top of the older revision",
+            reason="The listed metadata file must not break the chain",
+        )
+        self.assertTrue(history.inspect(self.root)["clean"])
+        self.assertEqual(len(history.list_revisions(self.root)), 2)
+
+        preview = history.undo_preview(self.root, first)
+        self.assertEqual(preview["changes"]["deleted"], ["profile/later.md"])
+        history.undo_apply(self.root, first, preview["token"], "restore the first state")
+        self.assertTrue(history.inspect(self.root)["clean"])
+        self.assertFalse(history.recovery_preview(self.root)["needed"])
+
         (self.root / ".DS_Store").unlink()
         self.assertTrue(history.inspect(self.root)["clean"])
 

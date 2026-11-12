@@ -2532,6 +2532,7 @@ This synthetic card deliberately omits stated provenance.
         template = skill / "assets" / "brain-template"
         for folder in (template, template / "system", template / "profile"):
             (folder / ".DS_Store").write_bytes(b"\x00\x00\x00\x01Bud1\xff")
+            (folder / "desktop.ini").write_text("[ViewState]\n", encoding="utf-8")
         tool = skill / "scripts" / "brainctl.py"
         brain = self.sandbox / "second-brain"
         pointer = self.sandbox / "second-pointer.json"
@@ -2560,6 +2561,7 @@ This synthetic card deliberately omits stated provenance.
             tool=tool,
         )
         self.assertEqual(list(brain.rglob(".DS_Store")), [])
+        self.assertEqual(list(brain.rglob("desktop.ini")), [])
         status, _ = self.run_brainctl(
             "history",
             "status",
@@ -2568,6 +2570,69 @@ This synthetic card deliberately omits stated provenance.
             tool=tool,
         )
         self.assertTrue(status["ok"])
+        upgrade, _ = self.run_brainctl(
+            "upgrade",
+            "preview",
+            "--brain-root",
+            str(brain),
+            tool=tool,
+        )
+        self.assertFalse(upgrade["needed"])
+
+    def test_connect_remove_clears_the_record_when_the_block_is_already_gone(
+        self,
+    ) -> None:
+        target = self.sandbox / "block-deleted-by-owner.md"
+        target.write_text("# Synthetic assistant instructions\n", encoding="utf-8")
+        self.set_stage_for_test("CONNECTION_REVIEW")
+        self.approve("connection-read", target)
+        self.approve("connection", target)
+        self.select_connection(target)
+        preview, _ = self.run_brainctl(
+            "connect",
+            "preview",
+            "--brain-root",
+            str(self.brain),
+            "--target",
+            str(target),
+        )
+        self.set_stage_for_test("CONNECTION_APPLY")
+        self.run_brainctl(
+            "connect",
+            "apply",
+            "--brain-root",
+            str(self.brain),
+            "--target",
+            str(target),
+            "--token",
+            preview["confirmation_token"],
+        )
+        rewritten = "# The owner rewrote this file without the memory block\n"
+        target.write_text(rewritten, encoding="utf-8")
+        self.assertIn(str(target.resolve()), self.saved_state()["connections"])
+
+        removal, _ = self.run_brainctl(
+            "connect",
+            "remove-preview",
+            "--brain-root",
+            str(self.brain),
+            "--target",
+            str(target),
+        )
+        self.assertEqual(removal["action"], "already-removed")
+        removed, _ = self.run_brainctl(
+            "connect",
+            "remove",
+            "--brain-root",
+            str(self.brain),
+            "--target",
+            str(target),
+            "--token",
+            removal["confirmation_token"],
+        )
+        self.assertEqual(removed["connection_record"], "cleared")
+        self.assertNotIn(str(target.resolve()), self.saved_state()["connections"])
+        self.assertEqual(target.read_text(encoding="utf-8"), rewritten)
 
     def test_ready_memory_reopens_connection_review_to_add_another_assistant(
         self,

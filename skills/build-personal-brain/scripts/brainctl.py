@@ -3930,15 +3930,26 @@ def cmd_connect(args: argparse.Namespace) -> None:
     original = original_bytes.decode("utf-8")
     if original == transformed:
         content_hash = hashlib.sha256(transformed.encode("utf-8")).hexdigest()
-        output(
-            {
-                "ok": True,
-                "target": str(target),
-                "action": "already-removed" if remove else "already-connected",
-                "changed": False,
-                "content_sha256": content_hash,
-            }
-        )
+        result = {
+            "ok": True,
+            "target": str(target),
+            "action": "already-removed" if remove else "already-connected",
+            "changed": False,
+            "content_sha256": content_hash,
+        }
+        if remove:
+            # The block is already gone from the file. Dropping the record is
+            # what the reviewed removal asked for; keeping it would leave the
+            # memory failing validation with nothing left to remove.
+            state.setdefault("connections", {}).pop(str(target), None)
+            save_state(
+                brain_root,
+                state,
+                "brain-disconnected",
+                {"target": str(target), "block": "already-removed"},
+            )
+            result["connection_record"] = "cleared"
+        output(result)
         return
     timestamp = dt.datetime.now().strftime("%Y%m%dT%H%M%S%f")
     backup_dir = brain_root / "work" / "setup" / "backups"

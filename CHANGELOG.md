@@ -14,6 +14,10 @@ the README.
   counted as an unsaved change, and search and saves refused until someone
   deleted it. The same files inside the builder's template folder no longer
   stop the creation of a new memory.
+- **Removing a connection whose block is already gone.** `connect remove`
+  now clears the connection record when the managed block was deleted from
+  the instruction file. Before, the record stayed and the memory kept
+  failing validation with nothing left to remove.
 
 ### Added
 

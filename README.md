@@ -92,7 +92,7 @@ boundaries and responsible-reporting guidance.
 ## Verification
 
 The test suite uses only Python's standard library. At this revision, all
-**93 tests pass locally on Python 3.9.6**:
+**94 tests pass locally on Python 3.9.6**:
 
 ```bash
 python -m unittest discover -s tests -v
@@ -160,7 +160,7 @@ release changes.
 |   |-- references/                # staged operating policies
 |   |-- scripts/                   # deterministic control plane
 |   `-- assets/brain-template/     # empty generated-memory template
-|-- tests/                         # 93 synthetic unittest cases
+|-- tests/                         # 94 synthetic unittest cases
 |-- CHANGELOG.md
 |-- SECURITY.md
 `-- PRIVACY.md

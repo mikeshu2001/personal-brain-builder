@@ -502,6 +502,8 @@ is still pending, record it with `--selected no` before returning.
 For an instruction file that was edited after connection, first remove that
 connection with `connect remove-preview` and `connect remove` while the
 memory is still `READY`, then reopen connection review and connect it again.
+If the block itself was deleted from the file, the removal reports
+`already-removed` and clears the stale connection record.
 
 Adding a new work folder to a finished memory has no supported path yet. Say
 so plainly instead of improvising one.
