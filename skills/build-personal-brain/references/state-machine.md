@@ -19,6 +19,7 @@ the metadata map, a content audit, or a session-history audit.
 9. Pause, recovery, and cancellation
 10. Runtime retrieval submachine
 11. Explicit remember and supersession submachine
+12. Operating-file upgrade submachine
 
 ## 1. Operating model
 
@@ -473,8 +474,8 @@ workflow, not a normal backup, save, or undo.
 
 - **Entry:** handoff is complete.
 - **Actions:** use the runtime retrieval and explicit-write submachines below.
-  Offer health checks, open-conflict review, connection removal, and scoped
-  re-audits when requested.
+  Offer health checks, open-conflict review, connection removal, scoped
+  re-audits, and an operating-file upgrade when requested.
 - **Outputs:** normal memory-assisted work.
 - **Exit:** remain `READY` unless an authorized maintenance operation enters
   a dedicated substate.
@@ -910,3 +911,40 @@ For “forget”, ask whether the fact merely stopped being true or sensitive
 data must be physically erased. The first is a temporal closure operation.
 The second is a separate destructive privacy workflow that must explain
 history implications and obtain explicit approval.
+
+## 12. Operating-file upgrade submachine
+
+Run this submachine only when the owner asks to update an existing memory
+with a newer downloaded builder. Follow the `Operating-file upgrade` section
+of `maintenance.md`.
+
+### `UPGRADE_PREVIEW`
+
+- **Entry:** explicit update request; the newer builder is available locally
+  and the exact memory location is confirmed.
+- **Actions:** run the builder's `upgrade preview` against that memory; show
+  both versions and the listed operating files; explain that the memory
+  returns to a recheck point.
+- **Output:** the current confirmation token, or the fact that nothing needs
+  an upgrade.
+- **Exit:** `UPGRADE_APPLY` after explicit approval.
+- **Fail closed:** a memory that fails validation, unsaved memory changes, a
+  history and state disagreement, a recorded blocking issue, an unfinished
+  resume, or a builder older than the memory.
+
+### `UPGRADE_APPLY`
+
+- **Actions:** apply with the current token and an approval note. The tool
+  replaces only files under `system/`, saves one local-history revision,
+  clears the acceptance results, and marks verified connections for a new
+  verification.
+- **Output:** `FAILED_CLOSED` with the recheck point in `failed_from`:
+  `LIBRARY_VALIDATION` for a finished memory, the current stage for an
+  earlier one.
+- **Exit:** `DISCOVER_OR_RESUME` with explicit recovery, then the recorded
+  stage.
+- **Resume:** after an interruption between files create a new preview with
+  the same builder; files already replaced are recognized and the same
+  upgrade finishes. After an interruption that follows the saved revision,
+  use the guided history reconciliation.
+- **Fail closed:** a stale token. Never edit operating files by hand.

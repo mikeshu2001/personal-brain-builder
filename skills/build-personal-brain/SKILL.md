@@ -1,6 +1,6 @@
 ---
 name: build-personal-brain
-description: Create, resume, validate, connect, or maintain a private cross-project memory for AI assistants. Use when a person asks to build a personal memory from local work folders and past assistant conversations, continue an interrupted memory audit, connect an existing memory to another local assistant, verify that the memory works in fresh conversations, or explicitly remember, replace, correct, or forget stored knowledge.
+description: Create, resume, validate, connect, upgrade, or maintain a private cross-project memory for AI assistants. Use when a person asks to build a personal memory from local work folders and past assistant conversations, continue an interrupted memory audit, connect an existing memory to another local assistant, verify that the memory works in fresh conversations, update a memory built with an older version of this builder, or explicitly remember, replace, correct, or forget stored knowledge.
 ---
 
 # Build Personal Brain
@@ -50,7 +50,10 @@ On every invocation:
    choice and do not select one.
 5. If the state is damaged or unexpected memory changes exist, stop the
    affected action and explain the concrete issue.
-6. If no memory exists, begin the compatibility check and introduction.
+6. If the owner asks to update an already built memory, go to
+   `Upgrade an existing memory`. A freshly downloaded builder has no pointer
+   to that memory, so do not start a new build.
+7. If no memory exists, begin the compatibility check and introduction.
 
 Use `scripts/brainctl.py` for deterministic checks and mutations. Invoke it
 with the available Python 3 interpreter; never ask a beginner to type its
@@ -89,6 +92,7 @@ corresponding work:
 | Connecting an assistant | `connection-protocol.md`, `safety-rules.md` |
 | Fresh-conversation and recovery tests | `acceptance-tests.md`, `safety-rules.md` |
 | Ready-memory retrieval or explicit changes | `maintenance.md`, generated memory's `system/runner-contract.md` |
+| Updating a memory built with an older builder | `maintenance.md`, `state-machine.md`, `user-dialogue.md` |
 
 Read each selected reference completely. Do not load unrelated references
 merely because they exist.
@@ -466,6 +470,72 @@ result, and apply `lock clear` only with its current token. Then create a fresh
 token. Never guess between ambiguous histories.
 
 The owner's current instruction always wins over stored memory.
+
+## Upgrade an existing memory
+
+A finished memory keeps its own copy of the runner contract, the connection
+text, the guides, and the control scripts. It does not follow this repository.
+When the owner asks to update it, follow the `Operating-file upgrade` section
+of `references/maintenance.md` and the matching part of
+`references/user-dialogue.md`.
+
+Run the control tool of this downloaded builder against the owner's memory;
+the memory's own runtime copy refuses the operation. Ask the owner where the
+memory is, or take the location from the connection block in the assistant's
+own instructions, show the exact path, and obtain permission to check saved
+progress there. Then create a preview, which writes nothing:
+
+```bash
+python3 -B "/exact/path/to/this-skill/scripts/brainctl.py" upgrade preview \
+  --brain-root "/memory"
+```
+
+If the preview refuses because the memory fails validation, repair that
+first. The usual cause is an assistant instruction file edited after
+connection: remove that connection through the reviewed removal flow, run the
+upgrade, and connect the assistant again during the recheck.
+
+Show both versions and the listed files. Use `CHANGELOG.md` at the builder
+root to say in ordinary words what changes. Explain that knowledge cards and
+the owner profile stay untouched, that the memory returns to a recheck point,
+and that every acceptance check and every connected assistant must be
+verified again. Only after explicit approval:
+
+```bash
+python3 -B "/exact/path/to/this-skill/scripts/brainctl.py" upgrade apply \
+  --brain-root "/memory" \
+  --token "token-from-current-preview" \
+  --approval-note "owner approved upgrading the operating files to this builder"
+```
+
+The result names the recorded recheck point. Resume it with explicit
+recovery, for a finished memory:
+
+```bash
+python3 -B "/exact/path/to/this-skill/scripts/brainctl.py" state \
+  --brain-root "/memory" --stage DISCOVER_OR_RESUME --recovery \
+  --next-action "Resume the recheck after the upgrade"
+
+python3 -B "/exact/path/to/this-skill/scripts/brainctl.py" state \
+  --brain-root "/memory" --stage LIBRARY_VALIDATION --recovery \
+  --next-action "Validate the upgraded memory"
+```
+
+Continue from library validation through `Connect selected assistants` and
+`Validate completion`. For each connected assistant create a new connection
+preview: an empty change means its block is current and needs only a
+fresh-conversation check; a non-empty change is shown in full and approved
+like a first connection.
+
+Never edit files under the memory's `system/` folder by hand. If the upgrade
+is interrupted between files, create a new preview with the same builder; it
+recognizes the files already replaced and the same upgrade finishes. If it
+stops after the history revision was saved, follow the guided history
+reconciliation the tool asks for.
+
+The previous operating files stay in local history, but an undo marks every
+reviewed work area and conversation source for a new review. Explain that
+cost before offering an undo of an upgrade.
 
 ## Pause, recover, or fail closed
 

@@ -72,9 +72,17 @@ Classify approved roots into:
 
 - content-bearing work areas;
 - names-only archives, large media, raw exports, or snapshots;
+- names-only finished one-off work, unless the owner wants it studied;
 - explicit exclusions;
 - ambiguous areas requiring one owner decision;
 - inaccessible or unsupported areas.
+
+Before proposing content depth, ask which work areas the owner still runs.
+Finished one-off work, such as a delivered contest entry, a single article,
+or a past event, is rarely routed to again: its cards cost audit time and
+index space and then stay unopened. Propose names-only for it and let the
+owner decide. A lesson the owner wants to keep from such work belongs in a
+rule or decision card, not in a project card for the finished work.
 
 Do not widen a named work root to its parent. A permission for one project
 does not authorize sibling projects. Do not treat a whole documents,

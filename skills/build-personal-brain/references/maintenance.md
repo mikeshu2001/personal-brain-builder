@@ -299,6 +299,56 @@ To restore:
 
 Never restore from a search database alone.
 
+## Operating-file upgrade
+
+The memory keeps its own copy of the runner contract, the connection text,
+the guides, the templates, and the control scripts under `system/`. Ordinary
+saves accept knowledge paths only, so these files change through one
+operation: an upgrade applied from a newer downloaded builder.
+
+Run it only when the owner asks to update the memory:
+
+1. Use the control tool of the downloaded builder. The memory's own runtime
+   copy carries no newer files and refuses the operation.
+2. Create `upgrade preview`. It reads the memory and writes nothing. Show the
+   owner both versions and the listed files.
+3. Explain the consequence before asking: the memory leaves `READY` for a
+   recheck, every acceptance check must be repeated, and every connected
+   assistant must be reviewed and verified again in a fresh conversation.
+4. After explicit approval, run `upgrade apply` with the current token and a
+   short truthful approval note. The change is saved as one local-history
+   revision.
+5. Resume from the recorded recheck point: library validation, connection
+   review, acceptance, the recovery-copy decision, and handoff. A connection
+   preview shows whether the connection text changed for that assistant.
+
+The upgrade stops without writing when the memory fails validation or has
+unsaved changes, when history and state disagree, when a blocking issue or
+an unfinished resume is recorded, or when the builder is older than the
+memory's files.
+
+A memory must pass validation first, because the recheck cannot get past
+library validation with an error that already exists. The usual cause is an
+assistant instruction file that the owner edited after connection. Remove
+that connection through the reviewed removal flow, run the upgrade, and
+connect the assistant again during the recheck.
+
+If a run is interrupted between files, create a new preview with the same
+builder: it recognizes the files already replaced, and the same upgrade
+finishes. If it is interrupted after the history revision was saved, the tool
+asks for the guided history reconciliation, which records the same recheck
+point.
+
+The previous operating files stay in local history, but restoring them is
+costly: an undo marks every reviewed work area and conversation source for a
+new review, whatever it restores. Explain that before offering an undo. An
+undo to any revision saved before the upgrade also brings back the older
+operating files; run the upgrade again afterwards.
+
+An upgrade never changes knowledge cards, the owner profile, the index, or
+`START-HERE.md`. Never edit files under `system/` by hand: an unsaved change
+there blocks retrieval and every later save.
+
 ## Migration
 
 For a schema or layout change:
