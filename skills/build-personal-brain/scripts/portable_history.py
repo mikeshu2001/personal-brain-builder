@@ -161,6 +161,17 @@ def _history_path(root: Path) -> Path:
     return root / HISTORY_NAME
 
 
+# A file manager drops these files into any folder the owner opens. They are
+# not memory content: the working-tree scan skips them, so opening the memory
+# in Finder or Explorer cannot turn it into an unsaved state. The names stay
+# valid history paths because an older revision may still list one.
+OS_METADATA_NAMES = frozenset({".ds_store", "thumbs.db", "desktop.ini"})
+
+
+def is_os_metadata_name(name: str) -> bool:
+    return name.casefold() in OS_METADATA_NAMES
+
+
 def _is_excluded_parts(parts: Tuple[str, ...]) -> bool:
     if not parts:
         return False
@@ -347,6 +358,8 @@ def _scan_tree(root: Path) -> Tuple[Dict[str, Dict[str, Any]], Dict[str, bytes]]
                 continue
             if not stat.S_ISREG(metadata.st_mode):
                 raise HistoryError("Only regular files can be tracked: %s" % path)
+            if is_os_metadata_name(child.name):
+                continue
             data, mode = _safe_read_regular(path)
             relative = _validate_relative("/".join(child_parts))
             blob_id = _digest(data)
@@ -834,7 +847,11 @@ def _inspect_unlocked(
 ]:
     head, chain, manifests = _load_chain(history)
     head_revision = chain[0][1]
-    head_entries = manifests[head_revision["manifest"]]
+    head_entries = {
+        path: entry
+        for path, entry in manifests[head_revision["manifest"]].items()
+        if not is_os_metadata_name(path.rsplit("/", 1)[-1])
+    }
     current_entries, current_blobs = _scan_tree(root)
     changes = _diff_entries(head_entries, current_entries)
     result = {

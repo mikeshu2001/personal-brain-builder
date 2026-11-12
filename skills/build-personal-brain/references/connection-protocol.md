@@ -162,6 +162,19 @@ feature keeps working separately: what one assistant stores there is invisible
 to the others and reaches the shared memory only through the explicit
 remember flow.
 
+## Connections added or repaired later
+
+A finished memory accepts another host through the same transaction. On the
+owner's request, reopen connection review from the ready state, process the
+one new target, verify it in a fresh conversation, and return through
+acceptance and handoff. Hosts that are already verified stay untouched.
+
+A host file that changed outside the block after connection no longer matches
+its verified bytes, and the memory fails validation until that is resolved.
+Remove the connection through the reviewed removal, reopen connection review,
+and connect the host again; the removal and the new preview both preserve
+every byte outside the managed region.
+
 ## Health checks
 
 Use the implemented operations:

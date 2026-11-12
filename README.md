@@ -92,7 +92,7 @@ boundaries and responsible-reporting guidance.
 ## Verification
 
 The test suite uses only Python's standard library. At this revision, all
-**88 tests pass locally on Python 3.9.6**:
+**93 tests pass locally on Python 3.9.6**:
 
 ```bash
 python -m unittest discover -s tests -v
@@ -109,7 +109,9 @@ The suite exercises:
   recovery;
 - connection preview/apply/remove round trips and stale-confirmation refusal;
 - operating-file upgrade of a finished memory: preview, apply, refusals, an
-  interrupted run, and the recheck path back to a ready memory.
+  interrupted run, and the recheck path back to a ready memory;
+- a second assistant connected to a finished memory, and file-manager files
+  such as `.DS_Store` that must not count as memory changes.
 
 [GitHub Actions](.github/workflows/tests.yml) runs the same suite on Python
 3.9, 3.11, and 3.13. There are no third-party runtime or test dependencies to
@@ -158,7 +160,7 @@ release changes.
 |   |-- references/                # staged operating policies
 |   |-- scripts/                   # deterministic control plane
 |   `-- assets/brain-template/     # empty generated-memory template
-|-- tests/                         # 88 synthetic unittest cases
+|-- tests/                         # 93 synthetic unittest cases
 |-- CHANGELOG.md
 |-- SECURITY.md
 `-- PRIVACY.md

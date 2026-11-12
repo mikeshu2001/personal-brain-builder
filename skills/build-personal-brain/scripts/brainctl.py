@@ -51,6 +51,7 @@ from portable_history import (
     HistoryError,
     initialize as history_initialize,
     inspect as history_inspect,
+    is_os_metadata_name,
     list_revisions as history_list_revisions,
     recovery_apply as history_recovery_apply,
     recovery_preview as history_recovery_preview,
@@ -66,7 +67,7 @@ POINTER_TEMPLATE = SKILL_ROOT / "assets" / "runner-pointer.md"
 
 # Every copy of this tool carries the builder release it came from, so an
 # upgrade can compare a memory's runtime copy with the downloaded builder.
-BUILDER_VERSION = "1.1.0"
+BUILDER_VERSION = "1.2.0"
 BUILDER_VERSION_RE = re.compile(
     r'^BUILDER_VERSION = "(\d+)\.(\d+)\.(\d+)"\s*$',
     re.MULTILINE,
@@ -1535,7 +1536,14 @@ def cmd_init(args: argparse.Namespace) -> None:
     state: dict[str, Any]
     target_published = False
     try:
-        shutil.copytree(TEMPLATE_ROOT, staging, dirs_exist_ok=True)
+        shutil.copytree(
+            TEMPLATE_ROOT,
+            staging,
+            dirs_exist_ok=True,
+            ignore=lambda _directory, names: {
+                name for name in names if is_os_metadata_name(name)
+            },
+        )
         os.chmod(staging, 0o700)
         for rel in REQUIRED_DIRS:
             (staging / rel).mkdir(parents=True, exist_ok=True)
@@ -1751,7 +1759,7 @@ def cmd_state(args: argparse.Namespace) -> None:
         previous == "CORE_REVIEW"
         and args.stage == "LIBRARY_VALIDATION"
     ) or (
-        previous == "LIBRARY_VALIDATION"
+        previous in {"LIBRARY_VALIDATION", "READY"}
         and args.stage == "CONNECTION_REVIEW"
     ) or (
         previous == "HANDOFF"
@@ -3153,6 +3161,8 @@ def validate_brain(
                     )
                     dir_names.remove(name)
             for name in file_names:
+                if is_os_metadata_name(name):
+                    continue
                 path = current_path / name
                 relative = path.relative_to(brain_root).as_posix()
                 try:
@@ -4545,7 +4555,11 @@ def builder_operating_files(
     files: dict[str, bytes] = {}
     for source in sorted(template_system.rglob("*")):
         relative = source.relative_to(TEMPLATE_ROOT)
-        if source.is_dir() or any(part.startswith(".") for part in relative.parts):
+        if (
+            source.is_dir()
+            or is_os_metadata_name(source.name)
+            or any(part.startswith(".") for part in relative.parts)
+        ):
             continue
         files[relative.as_posix()] = rendered(source)
     files["system/runtime/assets/runner-pointer.md"] = rendered(POINTER_TEMPLATE)

@@ -156,7 +156,9 @@ _NORMAL_FORWARD_TRANSITIONS: dict[str, frozenset[str]] = {
     "ACCEPTANCE_TESTING": frozenset({"RECOVERY_COPY_REVIEW"}),
     "RECOVERY_COPY_REVIEW": frozenset({"HANDOFF"}),
     "HANDOFF": frozenset({"READY"}),
-    "READY": frozenset({"READY"}),
+    # A finished memory may reopen connection review to add or repair an
+    # assistant connection. The way back to READY repeats the usual gates.
+    "READY": frozenset({"READY", "CONNECTION_REVIEW"}),
     "PAUSED": frozenset(),
     "FAILED_CLOSED": frozenset({"DISCOVER_OR_RESUME"}),
 }

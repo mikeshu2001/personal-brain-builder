@@ -299,6 +299,27 @@ To restore:
 
 Never restore from a search database alone.
 
+## Connections after handoff
+
+A finished memory can reopen connection review when the owner asks to connect
+another assistant or to repair a connection:
+
+1. Confirm the request. The memory must pass validation and have no unsaved
+   changes.
+2. Move from `READY` to `CONNECTION_REVIEW`.
+3. Follow the connection protocol for the exact target: read consent, preview,
+   write consent, apply, and verification in a fresh conversation.
+4. Return through acceptance, the recovery-copy review, and handoff. Recorded
+   acceptance results stay valid; every selected connection must be verified.
+
+When an instruction file was edited after connection, validation reports that
+it no longer matches its verified bytes. Remove that connection through the
+reviewed removal flow while the memory is `READY`, then reopen connection
+review and connect it again. Text outside the managed block is preserved.
+
+Adding a new work folder to a finished memory has no supported path yet. Say
+so instead of improvising one.
+
 ## Operating-file upgrade
 
 The memory keeps its own copy of the runner contract, the connection text,

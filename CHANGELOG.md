@@ -4,6 +4,38 @@ Releases of the builder. A finished memory keeps its own copy of the
 operating files and changes only when its owner runs the upgrade described in
 the README.
 
+## 1.2.0 — 2026-11-12
+
+### Fixed
+
+- **File-manager files no longer block a memory.** `.DS_Store`, `Thumbs.db`,
+  and `desktop.ini` are skipped by the history scan and by validation.
+  Before, opening the memory folder in Finder could leave a `.DS_Store` that
+  counted as an unsaved change, and search and saves refused until someone
+  deleted it. The same files inside the builder's template folder no longer
+  stop the creation of a new memory.
+
+### Added
+
+- **Another assistant for a finished memory.** A ready memory can reopen
+  connection review on the owner's request. The new connection goes through
+  the usual preview, approval, and fresh-conversation verification, and the
+  memory returns to the ready state through acceptance, the recovery-copy
+  review, and handoff. Recorded acceptance results stay valid. The same path
+  repairs a connection whose instruction file was edited after connection:
+  remove it, reopen connection review, connect again.
+
+### Changed
+
+- The owner dialogue no longer offers to add a work folder to a finished
+  memory. The control tool has no supported path for that yet.
+
+### Upgrade notes
+
+- An existing memory gets both changes through the upgrade from this
+  builder. A memory that already holds a stray `.DS_Store` can be upgraded
+  without deleting it.
+
 ## 1.1.0 — 2026-11-12
 
 ### Added
