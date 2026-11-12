@@ -64,6 +64,14 @@ SKILL_ROOT = Path(__file__).resolve().parent.parent
 TEMPLATE_ROOT = SKILL_ROOT / "assets" / "brain-template"
 POINTER_TEMPLATE = SKILL_ROOT / "assets" / "runner-pointer.md"
 
+# Every copy of this tool carries the builder release it came from, so an
+# upgrade can compare a memory's runtime copy with the downloaded builder.
+BUILDER_VERSION = "1.1.0"
+BUILDER_VERSION_RE = re.compile(
+    r'^BUILDER_VERSION = "(\d+)\.(\d+)\.(\d+)"\s*$',
+    re.MULTILINE,
+)
+
 KNOWLEDGE_ROOTS = ("profile", "projects", "rules", "links", "journal", "inferred")
 NON_CANONICAL_ROOTS = ("inbox", "system", "work", "examples")
 REQUIRED_DIRS = (
@@ -95,6 +103,13 @@ REQUIRED_RUNTIME_FILES = (
     "system/runtime/guides/maintenance.md",
     "system/runtime/guides/safety-rules.md",
     "system/runtime/README.md",
+)
+RUNTIME_GUIDES = ("maintenance.md", "safety-rules.md")
+RUNTIME_SCRIPTS = (
+    "brainctl.py",
+    "state_control.py",
+    "card_engine.py",
+    "portable_history.py",
 )
 
 STATES = set(TOP_LEVEL_STATES)
@@ -286,6 +301,7 @@ def atomic_replace_preserving_metadata(
     *,
     expected_before: bytes | None = None,
     expected_fingerprint: tuple[Any, ...] | None = None,
+    temp_dir: Path | None = None,
 ) -> None:
     metadata: dict[str, Any] | None = None
     if path.exists() or path.is_symlink():
@@ -306,7 +322,11 @@ def atomic_replace_preserving_metadata(
                     metadata["xattrs"][name] = os.getxattr(path, name)
                 except OSError:
                     continue
-    fd, tmp_name = tempfile.mkstemp(prefix=f".{path.name}.", suffix=".tmp", dir=path.parent)
+    fd, tmp_name = tempfile.mkstemp(
+        prefix=f".{path.name}.",
+        suffix=".tmp",
+        dir=temp_dir or path.parent,
+    )
     tmp_path = Path(tmp_name)
     try:
         with os.fdopen(fd, "wb") as handle:
@@ -1524,7 +1544,7 @@ def cmd_init(args: argparse.Namespace) -> None:
             POINTER_TEMPLATE,
             runtime_root / "assets" / "runner-pointer.md",
         )
-        for guide_name in ("maintenance.md", "safety-rules.md"):
+        for guide_name in RUNTIME_GUIDES:
             shutil.copy2(
                 SKILL_ROOT / "references" / guide_name,
                 runtime_root / "guides" / guide_name,
@@ -1538,12 +1558,7 @@ def cmd_init(args: argparse.Namespace) -> None:
         substitute_template_tree(staging, replacements)
         # Copy executable sources after template substitution. Their literal
         # placeholder strings are validation rules, not template fields.
-        for script_name in (
-            "brainctl.py",
-            "state_control.py",
-            "card_engine.py",
-            "portable_history.py",
-        ):
+        for script_name in RUNTIME_SCRIPTS:
             shutil.copy2(
                 SKILL_ROOT / "scripts" / script_name,
                 runtime_root / "scripts" / script_name,
@@ -4488,6 +4503,285 @@ def cmd_history(args: argparse.Namespace) -> None:
     )
 
 
+def operating_files_version(tool_source: bytes | None) -> tuple[int, int, int]:
+    """Return the builder release recorded in one copy of this control tool."""
+
+    if tool_source is not None:
+        match = BUILDER_VERSION_RE.search(tool_source.decode("utf-8", "replace"))
+        if match is not None:
+            return (int(match.group(1)), int(match.group(2)), int(match.group(3)))
+    # A memory created before the upgrade command existed carries no version.
+    return (1, 0, 0)
+
+
+def builder_operating_files(
+    brain_root: Path,
+    state: dict[str, Any],
+) -> dict[str, bytes]:
+    """Render the operating files this builder places under ``system/``.
+
+    The result mirrors what ``init`` writes for a new memory, so a memory
+    created by this same builder needs no upgrade.
+    """
+
+    template_system = TEMPLATE_ROOT / "system"
+    if not template_system.is_dir():
+        raise BrainCtlError(
+            "Run the upgrade from a downloaded builder; a memory's own runtime "
+            "copy carries no newer operating files"
+        )
+    replacements = {
+        "OWNER_NAME": str(state.get("owner") or ""),
+        "LOCALE": str(state.get("locale") or ""),
+        "BRAIN_ROOT": str(brain_root),
+    }
+
+    def rendered(source: Path) -> bytes:
+        text = read_regular_utf8(source, description="builder operating file")
+        for key, value in replacements.items():
+            text = text.replace("{{" + key + "}}", value)
+        return text.encode("utf-8")
+
+    files: dict[str, bytes] = {}
+    for source in sorted(template_system.rglob("*")):
+        relative = source.relative_to(TEMPLATE_ROOT)
+        if source.is_dir() or any(part.startswith(".") for part in relative.parts):
+            continue
+        files[relative.as_posix()] = rendered(source)
+    files["system/runtime/assets/runner-pointer.md"] = rendered(POINTER_TEMPLATE)
+    for name in RUNTIME_GUIDES:
+        files[f"system/runtime/guides/{name}"] = rendered(
+            SKILL_ROOT / "references" / name
+        )
+    for name in RUNTIME_SCRIPTS:
+        files[f"system/runtime/scripts/{name}"] = read_regular_bytes(
+            SKILL_ROOT / "scripts" / name,
+            description="builder operating file",
+        )
+    return files
+
+
+def operating_files_upgrade_plan(
+    brain_root: Path,
+    state: dict[str, Any],
+) -> tuple[dict[str, Any], dict[str, bytes]]:
+    """Compare a memory's operating files with this builder without writing.
+
+    Returns the owner-facing preview and the exact bytes still to be written.
+    """
+
+    # The recheck point is recomputed from the current stage. A recorded
+    # blocking issue or a resume that has not reached its stage would be lost.
+    if state["state"] == "FAILED_CLOSED" or (
+        state["state"] == "DISCOVER_OR_RESUME" and state.get("resume_from")
+    ):
+        raise BrainCtlError(
+            "Resolve the recorded blocking issue and resume the memory to its "
+            "recorded stage before upgrading its operating files"
+        )
+    try:
+        history = history_inspect(brain_root)
+    except HistoryError as exc:
+        raise BrainCtlError(
+            f"Local history must be healthy before an upgrade: {exc}"
+        ) from exc
+    if history["head"] != state.get("expected_revision"):
+        raise BrainCtlError(
+            "Local history and durable state disagree; use the guided history "
+            "reconciliation before an upgrade"
+        )
+    # The recheck that follows an upgrade cannot pass library validation with
+    # an error that already exists, so such a memory is repaired first.
+    validation = validate_brain(brain_root)
+    if not validation["ok"]:
+        raise BrainCtlError(
+            "The memory must pass validation before an upgrade: "
+            + "; ".join(validation["errors"])
+        )
+    target = builder_operating_files(brain_root, state)
+    current: dict[str, bytes | None] = {}
+    for relative in target:
+        path = brain_root.joinpath(*relative.split("/"))
+        if path.exists() or path.is_symlink():
+            current[relative] = read_regular_bytes(
+                path,
+                description="memory operating file",
+            )
+        else:
+            current[relative] = None
+
+    unsaved = set(history["added"] + history["modified"] + history["deleted"])
+    # A re-run after an interrupted upgrade finds some files already replaced.
+    # Every other unsaved change belongs to the owner and must not be absorbed.
+    foreign = sorted(
+        relative
+        for relative in unsaved
+        if relative not in target or current[relative] != target[relative]
+    )
+    if foreign:
+        raise BrainCtlError(
+            "These unsaved memory changes block the upgrade: "
+            + ", ".join(foreign)
+            + ". Save or set aside unsaved knowledge files. For a file under "
+            "system/, finish the interrupted upgrade with the builder version "
+            "that started it."
+        )
+    writes = {
+        relative: data
+        for relative, data in target.items()
+        if current[relative] != data
+    }
+    changed = sorted(unsaved | set(writes))
+
+    tool_path = "system/runtime/scripts/brainctl.py"
+    from_version = operating_files_version(current[tool_path])
+    to_version = operating_files_version(target[tool_path])
+    if to_version < from_version:
+        raise BrainCtlError(
+            "This builder is older than the memory's operating files "
+            f"({'.'.join(map(str, to_version))} < "
+            f"{'.'.join(map(str, from_version))}); download a current builder"
+        )
+
+    files: list[dict[str, Any]] = []
+    for relative in changed:
+        before = current[relative]
+        files.append(
+            {
+                "path": relative,
+                "action": (
+                    "already-written"
+                    if relative not in writes
+                    else "add"
+                    if before is None
+                    else "replace"
+                ),
+                "before_sha256": (
+                    None if before is None else hashlib.sha256(before).hexdigest()
+                ),
+                "after_sha256": hashlib.sha256(target[relative]).hexdigest(),
+            }
+        )
+    preview: dict[str, Any] = {
+        "needed": bool(changed),
+        "from_version": ".".join(map(str, from_version)),
+        "to_version": ".".join(map(str, to_version)),
+        "head": history["head"],
+        "operating_files": len(target),
+        "files": files,
+        "confirmation_token": None,
+    }
+    if changed:
+        token_payload = {
+            "action": "upgrade-operating-files",
+            "brain_id": state["brain_id"],
+            "head": history["head"],
+            "from_version": preview["from_version"],
+            "to_version": preview["to_version"],
+            "files": files,
+        }
+        preview["confirmation_token"] = hashlib.sha256(
+            json.dumps(token_payload, sort_keys=True, separators=(",", ":")).encode(
+                "utf-8"
+            )
+        ).hexdigest()
+    return preview, writes
+
+
+def write_operating_file(brain_root: Path, relative: str, data: bytes) -> None:
+    path = brain_root.joinpath(*relative.split("/"))
+    ancestor = path.parent
+    while not ancestor.exists() and not ancestor.is_symlink():
+        ancestor = ancestor.parent
+    if ancestor.resolve() != ancestor or not is_within(ancestor, brain_root):
+        raise BrainCtlError(
+            f"Refusing to write an operating file through a redirected directory: {relative}"
+        )
+    path.parent.mkdir(parents=True, exist_ok=True)
+    # History ignores work/setup, so a write stopped before its rename leaves
+    # no unsaved path that would block the next preview.
+    atomic_replace_preserving_metadata(
+        path,
+        data,
+        temp_dir=brain_root / "work" / "setup",
+    )
+
+
+def cmd_upgrade(args: argparse.Namespace) -> None:
+    brain_root = resolve_path(args.brain_root)
+    state = load_state(brain_root)
+    preview, writes = operating_files_upgrade_plan(brain_root, state)
+    if args.action == "preview":
+        output({"ok": True, **preview})
+        return
+    if not args.token or not (args.approval_note or "").strip():
+        raise BrainCtlError(
+            "--token and --approval-note are required to apply an upgrade"
+        )
+    if contains_secret_value_text(args.approval_note):
+        raise BrainCtlError("Refusing to store a secret-like value in the approval note")
+    ensure_record_text_is_safe({"approval_note": args.approval_note})
+    expected_token = preview["confirmation_token"]
+    if not preview["needed"] or not isinstance(expected_token, str):
+        raise BrainCtlError(
+            "The memory's operating files already match this builder"
+        )
+    if not hmac.compare_digest(args.token, expected_token):
+        raise BrainCtlError("Upgrade token is stale or invalid; create a new preview")
+
+    # Each file is replaced atomically. If the process stops between files,
+    # the next preview recognizes the already-written ones and finishes the
+    # same upgrade; nothing is recorded as saved until history accepts it.
+    for relative, data in writes.items():
+        write_operating_file(brain_root, relative, data)
+    paths = [item["path"] for item in preview["files"]]
+    try:
+        revision = history_save(
+            brain_root,
+            paths,
+            f"upgrade operating files to builder {preview['to_version']}",
+            args.approval_note,
+        )
+    except HistoryError as exc:
+        raise BrainCtlError(f"Local history save failed: {exc}") from exc
+
+    state["expected_revision"] = revision
+    invalidate_after_history_change(
+        state,
+        brain_root,
+        kind="upgrade",
+        issue=(
+            "The memory's operating files were upgraded. Validate the library, "
+            "review every assistant connection, and repeat the acceptance "
+            "checks before treating the memory as ready."
+        ),
+    )
+    save_state(
+        brain_root,
+        state,
+        "operating-files-upgraded",
+        {
+            "revision": revision,
+            "from_version": preview["from_version"],
+            "to_version": preview["to_version"],
+            "paths": paths,
+            "approval_note": args.approval_note,
+        },
+    )
+    output(
+        {
+            "ok": True,
+            "upgraded": True,
+            "from_version": preview["from_version"],
+            "to_version": preview["to_version"],
+            "revision": revision,
+            "paths": paths,
+            "state": state["state"],
+            "resume_from": state.get("failed_from"),
+        }
+    )
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description="Control and validate a private cross-project personal brain."
@@ -4757,6 +5051,16 @@ def build_parser() -> argparse.ArgumentParser:
     history.add_argument("--reason")
     history.set_defaults(func=cmd_history)
 
+    upgrade = sub.add_parser(
+        "upgrade",
+        help="Preview or apply this builder's operating files to an existing memory",
+    )
+    upgrade.add_argument("action", choices=("preview", "apply"))
+    upgrade.add_argument("--brain-root", required=True)
+    upgrade.add_argument("--token")
+    upgrade.add_argument("--approval-note")
+    upgrade.set_defaults(func=cmd_upgrade)
+
     return parser
 
 
@@ -4775,6 +5079,7 @@ def main() -> None:
                 args.command == "history"
                 and args.action in {"undo", "recover", "reconcile"}
             )
+            or (args.command == "upgrade" and args.action == "apply")
         )
         if mutating:
             brain_root = resolve_path(args.brain_root)

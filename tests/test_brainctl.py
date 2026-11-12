@@ -1,9 +1,15 @@
 from __future__ import annotations
 
+import argparse
+import contextlib
 import hashlib
+import importlib.util
+import io
 import json
 import os
 import platform
+import re
+import shutil
 import stat
 import subprocess
 import sys
@@ -109,9 +115,10 @@ class BrainCtlCliTests(unittest.TestCase):
         self,
         *arguments: str,
         expected_returncode: int = 0,
+        tool: Path = BRAINCTL,
     ) -> tuple[dict[str, Any], subprocess.CompletedProcess[str]]:
         result = subprocess.run(
-            [sys.executable, str(BRAINCTL), *arguments],
+            [sys.executable, str(tool), *arguments],
             cwd=self.sandbox,
             env=self.env,
             text=True,
@@ -375,9 +382,9 @@ class BrainCtlCliTests(unittest.TestCase):
         self.assertTrue(history["clean"])
         self.assertTrue(history["revision_matches_state"])
 
-    def test_full_guided_cli_path_reaches_ready_and_runtime_is_self_contained(
-        self,
-    ) -> None:
+    def reach_ready(self, connection_target: Path | None = None) -> None:
+        """Walk the guided path to READY, optionally with one verified connection."""
+
         source = self.sandbox / "guided-source"
         source.mkdir()
         (source / "visible.txt").write_text(
@@ -477,12 +484,44 @@ class BrainCtlCliTests(unittest.TestCase):
             "--note",
             "Synthetic owner reviewed the complete compact profile.",
         )
-        for stage, action in (
-            ("LIBRARY_VALIDATION", "Validate the complete memory."),
-            ("CONNECTION_REVIEW", "Review optional assistant connections."),
-            ("ACCEPTANCE_TESTING", "Run the release checks."),
-        ):
-            advance(stage, action)
+        advance("LIBRARY_VALIDATION", "Validate the complete memory.")
+        advance("CONNECTION_REVIEW", "Review optional assistant connections.")
+        if connection_target is not None:
+            self.approve("connection-read", connection_target)
+            self.approve("connection", connection_target)
+            self.select_connection(connection_target)
+            preview, _ = self.run_brainctl(
+                "connect",
+                "preview",
+                "--brain-root",
+                str(self.brain),
+                "--target",
+                str(connection_target),
+            )
+            advance("CONNECTION_APPLY", "Apply the exact reviewed connection.")
+            self.run_brainctl(
+                "connect",
+                "apply",
+                "--brain-root",
+                str(self.brain),
+                "--target",
+                str(connection_target),
+                "--token",
+                preview["confirmation_token"],
+            )
+            self.run_brainctl(
+                "record",
+                "connection",
+                "--brain-root",
+                str(self.brain),
+                "--target",
+                str(connection_target),
+                "--status",
+                "verified",
+                "--evidence",
+                "Synthetic fresh conversation answered the canary question.",
+            )
+        advance("ACCEPTANCE_TESTING", "Run the release checks.")
 
         for check_id in REQUIRED_INSTALLATION_CHECKS:
             self.run_brainctl(
@@ -517,6 +556,11 @@ class BrainCtlCliTests(unittest.TestCase):
         )
         advance("HANDOFF", "Show the final coverage report.")
         advance("READY", "Use the finished memory.")
+
+    def test_full_guided_cli_path_reaches_ready_and_runtime_is_self_contained(
+        self,
+    ) -> None:
+        self.reach_ready()
 
         runtime = (
             self.brain / "system" / "runtime" / "scripts" / "brainctl.py"
@@ -2438,6 +2482,474 @@ This synthetic card deliberately omits stated provenance.
             str(self.brain),
         )
         self.assertTrue(status["revision_matches_state"])
+
+    CONTRACT_PATH = "system/runner-contract.md"
+    POINTER_PATH = "system/runtime/assets/runner-pointer.md"
+    TOOL_PATH = "system/runtime/scripts/brainctl.py"
+    ADDED_PATH = "system/synthetic-added/guide.md"
+    NEWER_CONTRACT_RULE = "Synthetic newer contract rule."
+    NEWER_CONNECTION_LINE = "Synthetic newer connection line."
+    NEWER_PATHS = [CONTRACT_PATH, POINTER_PATH, TOOL_PATH, ADDED_PATH]
+
+    def newer_builder(self, version: str = "9.0.0") -> Path:
+        """Copy the builder with changed and added operating files and a new release."""
+
+        skill = self.sandbox / "newer-builder" / "build-personal-brain"
+        shutil.copytree(
+            SCRIPTS_DIRECTORY.parent,
+            skill,
+            ignore=shutil.ignore_patterns("__pycache__"),
+        )
+        contract = skill / "assets" / "brain-template" / self.CONTRACT_PATH
+        contract.write_text(
+            contract.read_text(encoding="utf-8")
+            + f"\n{self.NEWER_CONTRACT_RULE}\n",
+            encoding="utf-8",
+        )
+        added = skill / "assets" / "brain-template" / self.ADDED_PATH
+        added.parent.mkdir()
+        added.write_text("# Synthetic added guide\n", encoding="utf-8")
+        pointer = skill / "assets" / "runner-pointer.md"
+        pointer.write_text(
+            pointer.read_text(encoding="utf-8").replace(
+                "<!-- END PERSONAL BRAIN -->",
+                f"{self.NEWER_CONNECTION_LINE}\n<!-- END PERSONAL BRAIN -->",
+            ),
+            encoding="utf-8",
+        )
+        tool = skill / "scripts" / "brainctl.py"
+        source = tool.read_text(encoding="utf-8")
+        release = re.search(r'^BUILDER_VERSION = "[0-9.]+"$', source, re.MULTILINE)
+        self.assertIsNotNone(release)
+        tool.write_text(
+            source.replace(release.group(0), f'BUILDER_VERSION = "{version}"'),
+            encoding="utf-8",
+        )
+        return tool
+
+    def upgrade_preview(self, tool: Path, **options: Any) -> dict[str, Any]:
+        preview, _ = self.run_brainctl(
+            "upgrade",
+            "preview",
+            "--brain-root",
+            str(self.brain),
+            tool=tool,
+            **options,
+        )
+        return preview
+
+    def upgrade_apply(self, tool: Path, token: str, **options: Any) -> dict[str, Any]:
+        applied, _ = self.run_brainctl(
+            "upgrade",
+            "apply",
+            "--brain-root",
+            str(self.brain),
+            "--token",
+            token,
+            "--approval-note",
+            "Synthetic owner approved this exact operating-file upgrade.",
+            tool=tool,
+            **options,
+        )
+        return applied
+
+    def saved_state(self) -> dict[str, Any]:
+        return json.loads(
+            (self.brain / "work" / "setup" / "state.json").read_text(encoding="utf-8")
+        )
+
+    def test_upgrade_replaces_operating_files_and_ready_memory_passes_recheck(
+        self,
+    ) -> None:
+        target = self.sandbox / "upgrade-assistant-instructions.md"
+        target.write_text("# Synthetic assistant instructions\n", encoding="utf-8")
+        self.reach_ready(connection_target=target)
+        contract = self.brain / self.CONTRACT_PATH
+        contract_before = contract.read_bytes()
+        newer = self.newer_builder()
+
+        preview = self.upgrade_preview(newer)
+        self.assertTrue(preview["needed"])
+        self.assertEqual(preview["to_version"], "9.0.0")
+        self.assertNotEqual(preview["from_version"], "9.0.0")
+        self.assertEqual(
+            {item["path"]: item["action"] for item in preview["files"]},
+            {
+                self.CONTRACT_PATH: "replace",
+                self.POINTER_PATH: "replace",
+                self.TOOL_PATH: "replace",
+                self.ADDED_PATH: "add",
+            },
+        )
+        self.assertEqual(contract.read_bytes(), contract_before)
+        self.assertFalse((self.brain / self.ADDED_PATH).exists())
+        self.assertEqual(self.saved_state()["state"], "READY")
+
+        applied = self.upgrade_apply(newer, preview["confirmation_token"])
+        self.assertTrue(applied["upgraded"])
+        self.assertEqual(applied["state"], "FAILED_CLOSED")
+        self.assertEqual(applied["resume_from"], "LIBRARY_VALIDATION")
+        self.assertIn(self.NEWER_CONTRACT_RULE, contract.read_text(encoding="utf-8"))
+        pointer_text = (self.brain / self.POINTER_PATH).read_text(encoding="utf-8")
+        self.assertIn(self.NEWER_CONNECTION_LINE, pointer_text)
+        self.assertIn(str(self.brain.resolve()), pointer_text)
+        self.assertIn("{{BRAIN_ID}}", pointer_text)
+        self.assertEqual(
+            (self.brain / self.ADDED_PATH).read_text(encoding="utf-8"),
+            "# Synthetic added guide\n",
+        )
+
+        state = self.saved_state()
+        self.assertEqual(state["checks"], {})
+        self.assertEqual(
+            state["connections"][str(target.resolve())]["status"],
+            "connected",
+        )
+        runtime = self.brain / self.TOOL_PATH
+        listed, _ = self.run_brainctl(
+            "history",
+            "list",
+            "--brain-root",
+            str(self.brain),
+            tool=runtime,
+        )
+        head = listed["revisions"][0]
+        self.assertEqual(head["id"], applied["revision"])
+        self.assertEqual(head["changed_paths"], self.NEWER_PATHS)
+
+        # The upgraded memory must return to READY with its own runtime copy.
+        def advance(stage: str, *extra: str) -> None:
+            self.run_brainctl(
+                "state",
+                "--brain-root",
+                str(self.brain),
+                "--stage",
+                stage,
+                "--next-action",
+                "Continue the synthetic recheck.",
+                *extra,
+                tool=runtime,
+            )
+
+        advance("DISCOVER_OR_RESUME", "--recovery")
+        advance("LIBRARY_VALIDATION", "--recovery")
+        advance("CONNECTION_REVIEW")
+        block_preview, _ = self.run_brainctl(
+            "connect",
+            "preview",
+            "--brain-root",
+            str(self.brain),
+            "--target",
+            str(target),
+            tool=runtime,
+        )
+        self.assertIn(self.NEWER_CONNECTION_LINE, block_preview["diff"])
+        advance("CONNECTION_APPLY")
+        self.run_brainctl(
+            "connect",
+            "apply",
+            "--brain-root",
+            str(self.brain),
+            "--target",
+            str(target),
+            "--token",
+            block_preview["confirmation_token"],
+            tool=runtime,
+        )
+        connected = target.read_text(encoding="utf-8")
+        self.assertEqual(connected.count(self.NEWER_CONNECTION_LINE), 1)
+        self.assertEqual(connected.count("<!-- START PERSONAL BRAIN -->"), 1)
+        self.assertTrue(connected.startswith("# Synthetic assistant instructions\n"))
+        self.run_brainctl(
+            "record",
+            "connection",
+            "--brain-root",
+            str(self.brain),
+            "--target",
+            str(target),
+            "--status",
+            "verified",
+            "--evidence",
+            "Synthetic fresh conversation answered the canary after the upgrade.",
+            tool=runtime,
+        )
+        advance("ACCEPTANCE_TESTING")
+        for check_id in REQUIRED_INSTALLATION_CHECKS:
+            self.run_brainctl(
+                "record",
+                "check",
+                "--brain-root",
+                str(self.brain),
+                "--id",
+                check_id,
+                "--status",
+                "pass",
+                "--evidence",
+                f"Synthetic isolated evidence passed again for {check_id}.",
+                tool=runtime,
+            )
+        advance("RECOVERY_COPY_REVIEW")
+        advance("HANDOFF")
+        advance("READY")
+        status, _ = self.run_brainctl(
+            "status",
+            "--brain-root",
+            str(self.brain),
+            tool=runtime,
+        )
+        self.assertTrue(status["ok"])
+        self.assertEqual(status["state"], "READY")
+
+    def test_upgrade_is_not_needed_for_a_memory_created_by_this_builder(self) -> None:
+        preview = self.upgrade_preview(BRAINCTL)
+        self.assertFalse(preview["needed"])
+        self.assertEqual(preview["files"], [])
+        self.assertIsNone(preview["confirmation_token"])
+        self.assertEqual(preview["from_version"], preview["to_version"])
+        written_by_init = [
+            path for path in (self.brain / "system").rglob("*") if path.is_file()
+        ]
+        self.assertEqual(preview["operating_files"], len(written_by_init))
+
+        refused = self.upgrade_apply(BRAINCTL, "0" * 64, expected_returncode=2)
+        self.assertIn("already match", refused["error"])
+
+    def test_upgrade_refuses_a_stale_token_and_unsaved_owner_changes(self) -> None:
+        newer = self.newer_builder()
+        contract = self.brain / self.CONTRACT_PATH
+        contract_before = contract.read_bytes()
+        head_before = self.saved_state()["expected_revision"]
+
+        stale = self.upgrade_apply(newer, "0" * 64, expected_returncode=2)
+        self.assertIn("stale or invalid", stale["error"])
+        self.assertEqual(contract.read_bytes(), contract_before)
+
+        token = self.upgrade_preview(newer)["confirmation_token"]
+        secret_note, _ = self.run_brainctl(
+            "upgrade",
+            "apply",
+            "--brain-root",
+            str(self.brain),
+            "--token",
+            token,
+            "--approval-note",
+            'Synthetic owner approved; password="syntheticvalue12345"',
+            expected_returncode=2,
+            tool=newer,
+        )
+        self.assertIn("secret-like value", secret_note["error"])
+
+        lock = self.brain / "work" / "setup" / "operation.lock"
+        lock.write_text("{}\n", encoding="utf-8")
+        lock.chmod(0o600)
+        locked = self.upgrade_apply(newer, token, expected_returncode=2)
+        self.assertIn("Another memory operation", locked["error"])
+        lock.unlink()
+        self.assertEqual(contract.read_bytes(), contract_before)
+
+        saved_card = self.brain / "rules" / "saved-after-preview.md"
+        saved_card.write_bytes(
+            self.valid_rule_bytes(
+                "Saved after preview",
+                "A saved change that moves the memory on",
+                "The earlier upgrade token must no longer apply.",
+            )
+        )
+        self.run_brainctl(
+            "save",
+            "--brain-root",
+            str(self.brain),
+            "--paths",
+            "rules/saved-after-preview.md",
+            "--summary",
+            "save a card after the upgrade preview",
+            "--reason",
+            "the synthetic owner asked to remember it",
+        )
+        outdated = self.upgrade_apply(newer, token, expected_returncode=2)
+        self.assertIn("stale or invalid", outdated["error"])
+        self.assertEqual(contract.read_bytes(), contract_before)
+        head_before = self.saved_state()["expected_revision"]
+
+        card = self.brain / "rules" / "unsaved-before-upgrade.md"
+        card.write_bytes(
+            self.valid_rule_bytes(
+                "Unsaved before upgrade",
+                "An owner change that was never saved",
+                "The upgrade must not absorb this card.",
+            )
+        )
+        unsaved_card = self.upgrade_preview(newer, expected_returncode=2)
+        self.assertIn("rules/unsaved-before-upgrade.md", unsaved_card["error"])
+        card.unlink()
+
+        schema = self.brain / "system" / "schema.md"
+        schema.write_bytes(schema.read_bytes() + b"\nOwner-edited operating file.\n")
+        edited_system = self.upgrade_preview(newer, expected_returncode=2)
+        self.assertIn("system/schema.md", edited_system["error"])
+        self.assertEqual(contract.read_bytes(), contract_before)
+        self.assertEqual(self.saved_state()["expected_revision"], head_before)
+
+    def test_upgrade_refuses_failed_closed_memory_older_builder_and_runtime_copy(
+        self,
+    ) -> None:
+        newer = self.newer_builder()
+        preview = self.upgrade_preview(newer)
+        self.upgrade_apply(newer, preview["confirmation_token"])
+        self.assertEqual(self.saved_state()["state"], "FAILED_CLOSED")
+
+        failed_closed = self.upgrade_preview(BRAINCTL, expected_returncode=2)
+        self.assertIn("blocking issue", failed_closed["error"])
+
+        runtime = self.brain / self.TOOL_PATH
+        for stage in ("DISCOVER_OR_RESUME", "MAP_PERMISSION"):
+            if stage == "MAP_PERMISSION":
+                unfinished_resume = self.upgrade_preview(
+                    BRAINCTL,
+                    expected_returncode=2,
+                )
+                self.assertIn("recorded stage", unfinished_resume["error"])
+            self.run_brainctl(
+                "state",
+                "--brain-root",
+                str(self.brain),
+                "--stage",
+                stage,
+                "--recovery",
+                tool=runtime,
+            )
+        older = self.upgrade_preview(BRAINCTL, expected_returncode=2)
+        self.assertIn("older than the memory", older["error"])
+        self.assertIn(
+            self.NEWER_CONTRACT_RULE,
+            (self.brain / self.CONTRACT_PATH).read_text(encoding="utf-8"),
+        )
+
+        own_copy = self.upgrade_preview(runtime, expected_returncode=2)
+        self.assertIn("downloaded builder", own_copy["error"])
+
+    def test_upgrade_finishes_after_an_interrupted_file_replacement(self) -> None:
+        newer = self.newer_builder()
+        newer_contract = (
+            newer.parent.parent / "assets" / "brain-template" / self.CONTRACT_PATH
+        )
+        # A stopped apply leaves some files replaced and nothing saved yet.
+        (self.brain / self.CONTRACT_PATH).write_bytes(newer_contract.read_bytes())
+
+        preview = self.upgrade_preview(newer)
+        self.assertEqual(
+            {item["path"]: item["action"] for item in preview["files"]},
+            {
+                self.CONTRACT_PATH: "already-written",
+                self.POINTER_PATH: "replace",
+                self.TOOL_PATH: "replace",
+                self.ADDED_PATH: "add",
+            },
+        )
+        applied = self.upgrade_apply(newer, preview["confirmation_token"])
+        self.assertEqual(applied["paths"], self.NEWER_PATHS)
+        status, _ = self.run_brainctl(
+            "history",
+            "status",
+            "--brain-root",
+            str(self.brain),
+            tool=newer,
+        )
+        self.assertTrue(status["clean"])
+        self.assertTrue(status["revision_matches_state"])
+
+    def test_upgrade_requires_a_valid_memory_and_a_reviewed_removal_unblocks_it(
+        self,
+    ) -> None:
+        newer = self.newer_builder()
+        target = self.sandbox / "edited-after-connection.md"
+        target.write_text("# Synthetic assistant instructions\n", encoding="utf-8")
+        self.reach_ready(connection_target=target)
+        # Owners keep editing their own instruction files after connection.
+        with target.open("a", encoding="utf-8") as handle:
+            handle.write("\nA line the owner added later.\n")
+
+        contract_before = (self.brain / self.CONTRACT_PATH).read_bytes()
+        invalid = self.upgrade_preview(newer, expected_returncode=2)
+        self.assertIn("must pass validation", invalid["error"])
+        self.assertIn("no longer matches its verified bytes", invalid["error"])
+        self.assertEqual(
+            (self.brain / self.CONTRACT_PATH).read_bytes(),
+            contract_before,
+        )
+
+        removal, _ = self.run_brainctl(
+            "connect",
+            "remove-preview",
+            "--brain-root",
+            str(self.brain),
+            "--target",
+            str(target),
+        )
+        self.run_brainctl(
+            "connect",
+            "remove",
+            "--brain-root",
+            str(self.brain),
+            "--target",
+            str(target),
+            "--token",
+            removal["confirmation_token"],
+        )
+        self.assertIn(
+            "A line the owner added later.",
+            target.read_text(encoding="utf-8"),
+        )
+        self.assertTrue(self.upgrade_preview(newer)["needed"])
+
+        state_file = self.brain / "work" / "setup" / "state.json"
+        state = self.saved_state()
+        state["expected_revision"] = "0" * 64
+        state_file.write_text(
+            json.dumps(state, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+        mismatch = self.upgrade_preview(newer, expected_returncode=2)
+        self.assertIn("history reconciliation", mismatch["error"])
+
+    def test_upgrade_writer_stays_inside_the_memory_and_out_of_tracked_folders(
+        self,
+    ) -> None:
+        newer = self.newer_builder()
+        spec = importlib.util.spec_from_file_location("newer_brainctl", newer)
+        self.assertIsNotNone(spec)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        brain = self.brain.resolve()
+
+        outside = self.sandbox.resolve() / "outside-the-memory"
+        outside.mkdir()
+        redirected = brain / "system" / "redirected"
+        redirected.symlink_to(outside, target_is_directory=True)
+        with self.assertRaises(module.BrainCtlError):
+            module.write_operating_file(brain, "system/redirected/note.md", b"x")
+        self.assertEqual(list(outside.iterdir()), [])
+        redirected.unlink()
+
+        token = self.upgrade_preview(newer)["confirmation_token"]
+        arguments = argparse.Namespace(
+            action="apply",
+            brain_root=str(brain),
+            token=token,
+            approval_note="Synthetic owner approved this exact upgrade.",
+        )
+        with mock.patch.object(
+            module.tempfile,
+            "mkstemp",
+            wraps=tempfile.mkstemp,
+        ) as created, contextlib.redirect_stdout(io.StringIO()):
+            module.cmd_upgrade(arguments)
+        tracked_operating_folder = str(brain / "system")
+        temporary_folders = [str(call.kwargs["dir"]) for call in created.call_args_list]
+        self.assertTrue(temporary_folders)
+        for folder in temporary_folders:
+            self.assertFalse(folder.startswith(tracked_operating_folder), folder)
+        self.assertTrue((brain / self.ADDED_PATH).is_file())
 
 
 if __name__ == "__main__":
