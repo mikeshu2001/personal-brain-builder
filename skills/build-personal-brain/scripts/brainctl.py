@@ -67,7 +67,7 @@ POINTER_TEMPLATE = SKILL_ROOT / "assets" / "runner-pointer.md"
 
 # Every copy of this tool carries the builder release it came from, so an
 # upgrade can compare a memory's runtime copy with the downloaded builder.
-BUILDER_VERSION = "1.2.0"
+BUILDER_VERSION = "1.2.1"
 BUILDER_VERSION_RE = re.compile(
     r'^BUILDER_VERSION = "(\d+)\.(\d+)\.(\d+)"\s*$',
     re.MULTILINE,
@@ -946,6 +946,20 @@ def substitute_template_tree(root: Path, replacements: dict[str, str]) -> None:
         atomic_write_text(path, text)
 
 
+def holds_only_file_manager_files(directory: Path) -> bool:
+    """Return whether a folder is empty apart from file-manager files.
+
+    Finder or Explorer drops its own file into a folder the owner merely
+    opened, so such a folder still counts as empty for memory creation.
+    """
+
+    with os.scandir(directory) as children:
+        return all(
+            is_os_metadata_name(child.name) and child.is_file(follow_symlinks=False)
+            for child in children
+        )
+
+
 def doctor_report(
     candidate: Path | None,
     *,
@@ -987,7 +1001,7 @@ def doctor_report(
         "candidate_path": str(candidate) if candidate else None,
         "candidate_exists": candidate.exists() if candidate else None,
         "candidate_empty": (
-            candidate.is_dir() and not any(candidate.iterdir())
+            candidate.is_dir() and holds_only_file_manager_files(candidate)
             if candidate and candidate.exists()
             else None
         ),
@@ -1429,7 +1443,10 @@ def cmd_init(args: argparse.Namespace) -> None:
             )
         if brain_root.exists() and (
             not brain_root.is_dir()
-            or (not state_path(brain_root).exists() and any(brain_root.iterdir()))
+            or (
+                not state_path(brain_root).exists()
+                and not holds_only_file_manager_files(brain_root)
+            )
         ):
             raise BrainCtlError(f"Target must be a new or empty directory: {brain_root}")
         if not brain_root.parent.exists() or not brain_root.parent.is_dir():
@@ -1501,7 +1518,9 @@ def cmd_init(args: argparse.Namespace) -> None:
             }
         )
         return
-    if brain_root.exists() and (not brain_root.is_dir() or any(brain_root.iterdir())):
+    if brain_root.exists() and (
+        not brain_root.is_dir() or not holds_only_file_manager_files(brain_root)
+    ):
         if claim_created_here:
             _remove_pointer_claim_if_exact(pointer_path, claim_id=claim_id)
         raise BrainCtlError(f"Target must be a new or empty directory: {brain_root}")
@@ -1642,6 +1661,17 @@ def cmd_init(args: argparse.Namespace) -> None:
         state["expected_revision"] = revision
         atomic_write_json(state_path(staging), state)
         if target_was_empty:
+            # A file-manager file in the approved folder moves into the new
+            # memory, where the history scan never reads it.
+            with os.scandir(brain_root) as leftovers:
+                file_manager_names = [
+                    item.name
+                    for item in leftovers
+                    if is_os_metadata_name(item.name)
+                    and item.is_file(follow_symlinks=False)
+                ]
+            for name in file_manager_names:
+                os.replace(brain_root / name, staging / name)
             brain_root.rmdir()
         os.replace(staging, brain_root)
         target_published = True
@@ -1813,11 +1843,27 @@ def cmd_state(args: argparse.Namespace) -> None:
     )
 
 
+def _record_strings(payload: Any) -> Iterable[str]:
+    if isinstance(payload, str):
+        yield payload
+    elif isinstance(payload, dict):
+        for key, value in payload.items():
+            yield from _record_strings(key)
+            yield from _record_strings(value)
+    elif isinstance(payload, (list, tuple)):
+        for item in payload:
+            yield from _record_strings(item)
+
+
 def ensure_record_text_is_safe(payload: Any) -> None:
     text = json.dumps(payload, ensure_ascii=False, sort_keys=True)
     if len(text) > 20_000:
         raise BrainCtlError("Record is too large for setup state")
-    if contains_secret_value_text(text):
+    # JSON escapes quotes and line breaks, which hides a value written as
+    # key="value" or on the next line, so each raw string is screened too.
+    if contains_secret_value_text(text) or any(
+        contains_secret_value_text(value) for value in _record_strings(payload)
+    ):
         raise BrainCtlError("Refusing to store a secret-like value in setup state")
 
 
@@ -4206,12 +4252,38 @@ def _earlier_stage(first: str, second: str) -> str:
     )
 
 
+def revision_changed_paths(brain_root: Path, revision_id: Any) -> list[str] | None:
+    """Return the paths one history revision changed, or None when unknown."""
+
+    try:
+        revisions = history_list_revisions(brain_root)
+    except HistoryError:
+        return None
+    for revision in revisions:
+        if revision.get("id") == revision_id:
+            changed = revision.get("changed_paths")
+            return changed if isinstance(changed, list) else None
+    return None
+
+
+def restored_only_operating_files(changed_paths: Any) -> bool:
+    return (
+        isinstance(changed_paths, list)
+        and bool(changed_paths)
+        and all(
+            isinstance(path, str) and path.startswith("system/")
+            for path in changed_paths
+        )
+    )
+
+
 def invalidate_after_history_change(
     state: dict[str, Any],
     brain_root: Path,
     *,
     kind: str,
     issue: str,
+    changed_paths: Any = None,
 ) -> None:
     """Move durable workflow state to a safe re-check point after restore/reconcile."""
 
@@ -4242,7 +4314,10 @@ def invalidate_after_history_change(
             state.pop("core_review", None)
             resume_stage = _earlier_stage(resume_stage, "CORE_REVIEW")
 
-    if kind == "undo":
+    # A restore that touched only system/ brought back operating files and no
+    # knowledge, so reviewed areas and conversation sources keep their coverage.
+    # Unknown paths fall under the blanket rule.
+    if kind == "undo" and not restored_only_operating_files(changed_paths):
         areas = state.get("areas", {})
         if isinstance(areas, dict):
             for area in areas.values():
@@ -4387,6 +4462,10 @@ def cmd_history(args: argparse.Namespace) -> None:
                         "An interrupted memory restore was completed. "
                         "Review the restored knowledge before continuing."
                     ),
+                    changed_paths=revision_changed_paths(
+                        brain_root,
+                        recovered["head"],
+                    ),
                 )
             save_state(
                 brain_root,
@@ -4439,6 +4518,7 @@ def cmd_history(args: argparse.Namespace) -> None:
                     "an interrupted state update. Review the affected "
                     "knowledge before continuing."
                 ),
+                changed_paths=reconciliation["changed_paths"],
             )
             save_state(
                 brain_root,
@@ -4498,6 +4578,7 @@ def cmd_history(args: argparse.Namespace) -> None:
             "A previous memory revision was restored. Review the restored "
             "knowledge before continuing."
         ),
+        changed_paths=revision_changed_paths(brain_root, revision),
     )
     save_state(
         brain_root,
@@ -4743,8 +4824,6 @@ def cmd_upgrade(args: argparse.Namespace) -> None:
         raise BrainCtlError(
             "--token and --approval-note are required to apply an upgrade"
         )
-    if contains_secret_value_text(args.approval_note):
-        raise BrainCtlError("Refusing to store a secret-like value in the approval note")
     ensure_record_text_is_safe({"approval_note": args.approval_note})
     expected_token = preview["confirmation_token"]
     if not preview["needed"] or not isinstance(expected_token, str):

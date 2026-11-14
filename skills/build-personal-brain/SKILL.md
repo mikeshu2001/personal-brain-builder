@@ -571,9 +571,12 @@ recognizes the files already replaced and the same upgrade finishes. If it
 stops after the history revision was saved, follow the guided history
 reconciliation the tool asks for.
 
-The previous operating files stay in local history, but an undo marks every
-reviewed work area and conversation source for a new review. Explain that
-cost before offering an undo of an upgrade.
+The previous operating files stay in local history. An undo that restores
+only operating files, such as an undo made right after the upgrade, keeps
+reviewed work areas and conversation sources and returns the memory to the
+same recheck point. An undo that also restores knowledge marks every reviewed
+work area and conversation source for a new review; explain that cost before
+offering it.
 
 ## Pause, recover, or fail closed
 

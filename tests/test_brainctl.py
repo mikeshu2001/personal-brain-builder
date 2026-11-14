@@ -1841,6 +1841,44 @@ This synthetic card deliberately omits stated provenance.
         self.assertIn("real directory", blocked["error"])
         self.assertEqual((outside / "state.json").read_bytes(), before)
 
+    def test_record_text_with_a_quoted_or_wrapped_secret_is_refused(self) -> None:
+        source = self.sandbox / "consent-source"
+        source.mkdir()
+
+        def record_consent(note: str, expected_returncode: int = 0) -> dict[str, Any]:
+            payload, _ = self.run_brainctl(
+                "record",
+                "consent",
+                "--brain-root",
+                str(self.brain),
+                "--kind",
+                "metadata-map",
+                "--decision",
+                "approved",
+                "--scope",
+                str(source),
+                "--note",
+                note,
+                expected_returncode=expected_returncode,
+            )
+            return payload
+
+        state_file = self.brain / "work" / "setup" / "state.json"
+        before = state_file.read_bytes()
+        for note in (
+            'Use the synthetic service with api_key="syntheticvalue12345".',
+            "The synthetic password:\nsyntheticvalue12345",
+        ):
+            with self.subTest(note=note):
+                refused = record_consent(note, expected_returncode=2)
+                self.assertIn("secret-like value", refused["error"])
+                self.assertEqual(state_file.read_bytes(), before)
+
+        accepted = record_consent(
+            'The owner said: "keep the password out of the memory".'
+        )
+        self.assertTrue(accepted["ok"])
+
     def test_secret_in_card_body_and_non_markdown_knowledge_are_rejected(self) -> None:
         secret_card = self.brain / "rules" / "blocked-secret.md"
         secret_card.write_bytes(
@@ -2579,6 +2617,74 @@ This synthetic card deliberately omits stated provenance.
         )
         self.assertFalse(upgrade["needed"])
 
+    def test_init_accepts_a_folder_that_holds_only_file_manager_files(self) -> None:
+        def doctor_and_init(
+            brain: Path,
+            expected_returncode: int = 0,
+        ) -> tuple[dict[str, Any], dict[str, Any]]:
+            pointer = self.sandbox / f"{brain.name}-pointer.json"
+            doctor, _ = self.run_brainctl(
+                "doctor",
+                "--path",
+                str(brain),
+                "--pointer-file",
+                str(pointer),
+            )
+            created, _ = self.run_brainctl(
+                "init",
+                "--brain-root",
+                str(brain),
+                "--owner",
+                "Synthetic Owner",
+                "--locale",
+                "en",
+                "--pointer-file",
+                str(pointer),
+                "--preview-token",
+                doctor["creation_preview_token"],
+                "--approval-note",
+                "Synthetic owner approved this exact private location.",
+                expected_returncode=expected_returncode,
+            )
+            return doctor, created
+
+        finder_bytes = b"\x00\x00\x00\x01Bud1\xff"
+        opened = self.sandbox / "opened-in-finder"
+        opened.mkdir()
+        (opened / ".DS_Store").write_bytes(finder_bytes)
+        doctor, created = doctor_and_init(opened)
+        self.assertTrue(doctor["candidate_empty"])
+        self.assertTrue(created["ok"])
+        self.assertEqual((opened / ".DS_Store").read_bytes(), finder_bytes)
+        status, _ = self.run_brainctl("status", "--brain-root", str(opened))
+        self.assertTrue(status["ok"])
+        self.assertTrue(status["history_clean"])
+
+        occupied = self.sandbox / "occupied-folder"
+        occupied.mkdir()
+        (occupied / ".DS_Store").write_bytes(finder_bytes)
+        (occupied / "owner-notes.txt").write_text(
+            "Synthetic owner file.\n",
+            encoding="utf-8",
+        )
+        doctor, refused = doctor_and_init(occupied, expected_returncode=2)
+        self.assertFalse(doctor["candidate_empty"])
+        self.assertIn("new or empty directory", refused["error"])
+        self.assertEqual(
+            sorted(path.name for path in occupied.iterdir()),
+            [".DS_Store", "owner-notes.txt"],
+        )
+
+        outside = self.sandbox / "outside-finder-file"
+        outside.write_bytes(finder_bytes)
+        linked = self.sandbox / "linked-folder"
+        linked.mkdir()
+        (linked / ".DS_Store").symlink_to(outside)
+        doctor, refused = doctor_and_init(linked, expected_returncode=2)
+        self.assertFalse(doctor["candidate_empty"])
+        self.assertIn("new or empty directory", refused["error"])
+        self.assertTrue((linked / ".DS_Store").is_symlink())
+
     def test_connect_remove_clears_the_record_when_the_block_is_already_gone(
         self,
     ) -> None:
@@ -3152,6 +3258,157 @@ This synthetic card deliberately omits stated provenance.
         )
         mismatch = self.upgrade_preview(newer, expected_returncode=2)
         self.assertIn("history reconciliation", mismatch["error"])
+
+    def test_undo_of_an_upgrade_keeps_reviewed_areas_and_a_knowledge_undo_does_not(
+        self,
+    ) -> None:
+        source = self.sandbox / "reviewed-source"
+        source.mkdir()
+        (source / "notes.txt").write_text(
+            "Synthetic reviewed content.\n",
+            encoding="utf-8",
+        )
+        self.approve("metadata-map", source)
+        self.set_stage_for_test("DEEP_AUDIT_GATE")
+        self.approve("content-audit", source)
+        self.run_brainctl(
+            "scope",
+            "--brain-root",
+            str(self.brain),
+            "--path",
+            str(source),
+            "--mode",
+            "content",
+            "--label",
+            "reviewed-source",
+        )
+        self.set_stage_for_test("CONTOUR_LOOP")
+        self.run_brainctl(
+            "snapshot",
+            "create",
+            "--brain-root",
+            str(self.brain),
+            "--root",
+            str(source),
+            "--label",
+            "Reviewed area",
+        )
+        (self.brain / "journal" / "2026-07-23-reviewed-area.md").write_text(
+            "---\n"
+            'title: "Reviewed area"\n'
+            "type: journal\n"
+            "created: 2026-07-23\n"
+            "origin: observation\n"
+            'summary: "Synthetic source review completed"\n'
+            "---\n\n"
+            "# Reviewed area\n\n"
+            "No durable source facts were found in this synthetic area.\n",
+            encoding="utf-8",
+        )
+
+        def save(path: str, summary: str) -> str:
+            saved, _ = self.run_brainctl(
+                "save",
+                "--brain-root",
+                str(self.brain),
+                "--paths",
+                path,
+                "--summary",
+                summary,
+                "--reason",
+                "prepare the synthetic undo scenario",
+            )
+            return saved["revision"]
+
+        journal_revision = save(
+            "journal/2026-07-23-reviewed-area.md",
+            "record the synthetic area review",
+        )
+        self.run_brainctl(
+            "snapshot",
+            "verify",
+            "--brain-root",
+            str(self.brain),
+            "--root",
+            str(source),
+            "--label",
+            "Reviewed area",
+        )
+        self.run_brainctl(
+            "record",
+            "area",
+            "--brain-root",
+            str(self.brain),
+            "--id",
+            "reviewed-area",
+            "--label",
+            "Reviewed area",
+            "--paths",
+            str(source),
+            "--status",
+            "content-reviewed",
+            "--journal",
+            "journal/2026-07-23-reviewed-area.md",
+            "--saved-revision",
+            journal_revision,
+        )
+        card = self.brain / "rules" / "undo-control.md"
+        card.write_bytes(
+            self.valid_rule_bytes("Undo control", "First version", "First body.")
+        )
+        first_card_revision = save("rules/undo-control.md", "save the first version")
+        card.write_bytes(
+            self.valid_rule_bytes("Undo control", "Second version", "Second body.")
+        )
+        before_upgrade = save("rules/undo-control.md", "save the second version")
+
+        newer = self.newer_builder()
+        self.upgrade_apply(newer, self.upgrade_preview(newer)["confirmation_token"])
+        contract = self.brain / self.CONTRACT_PATH
+        self.assertIn(self.NEWER_CONTRACT_RULE, contract.read_text(encoding="utf-8"))
+
+        def undo_to(revision: str) -> dict[str, Any]:
+            preview, _ = self.run_brainctl(
+                "history",
+                "undo-preview",
+                "--brain-root",
+                str(self.brain),
+                "--to-revision",
+                revision,
+            )
+            self.run_brainctl(
+                "history",
+                "undo",
+                "--brain-root",
+                str(self.brain),
+                "--to-revision",
+                revision,
+                "--token",
+                preview["token"],
+                "--reason",
+                "exercise the synthetic undo scenario",
+            )
+            return self.saved_state()
+
+        after_upgrade_undo = undo_to(before_upgrade)
+        self.assertNotIn(
+            self.NEWER_CONTRACT_RULE,
+            contract.read_text(encoding="utf-8"),
+        )
+        self.assertEqual(after_upgrade_undo["state"], "FAILED_CLOSED")
+        self.assertEqual(after_upgrade_undo["checks"], {})
+        self.assertEqual(
+            after_upgrade_undo["areas"]["reviewed-area"]["coverage"],
+            "content-reviewed",
+        )
+
+        after_knowledge_undo = undo_to(first_card_revision)
+        self.assertIn("First body.", card.read_text(encoding="utf-8"))
+        self.assertEqual(
+            after_knowledge_undo["areas"]["reviewed-area"]["coverage"],
+            "needs-recheck",
+        )
+        self.assertEqual(after_knowledge_undo["failed_from"], "CONTOUR_LOOP")
 
     def test_upgrade_writer_stays_inside_the_memory_and_out_of_tracked_folders(
         self,
