@@ -362,9 +362,13 @@ finishes. If it is interrupted after the history revision was saved, the tool
 asks for the guided history reconciliation, which records the same recheck
 point.
 
-The previous operating files stay in local history, but restoring them is
-costly: an undo marks every reviewed work area and conversation source for a
-new review, whatever it restores. Explain that before offering an undo. An
+The previous operating files stay in local history. An undo that changes
+nothing outside `system/`, such as an undo made right after the upgrade,
+keeps reviewed work areas and conversation sources. The memory still fails
+closed: acceptance checks and connections are verified again. An undo that
+also restores knowledge marks every reviewed work area and conversation
+source for a new review, and so does an undo that had to be finished through
+history recovery or reconciliation; explain that cost before offering it. An
 undo to any revision saved before the upgrade also brings back the older
 operating files; run the upgrade again afterwards.
 
