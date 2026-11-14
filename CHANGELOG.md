@@ -12,7 +12,8 @@ the README.
   that holds only `.DS_Store`, `Thumbs.db`, or `desktop.ini` now counts as
   empty for `doctor` and `init`. Before, creating the folder in Finder first
   could make memory creation refuse it as non-empty. The file stays in the
-  folder; a folder with any other content is still refused.
+  folder, also when creation fails; a folder with any other content is still
+  refused.
 - **Secret screening of notes and reasons.** Text stored in setup state
   (approval notes, consent notes, next actions, reasons, evidence) is now
   screened as written. Before, a value in double quotes or on the next line,
@@ -20,9 +21,10 @@ the README.
   approval note.
 - **Undo of an upgrade keeps reviewed work.** An undo that restores only
   operating files under `system/` no longer marks reviewed work areas and
-  conversation sources for a new review: the memory repeats the acceptance
-  checks and the connection verification. An undo that also restores
-  knowledge behaves as before.
+  conversation sources for a new review. The memory still fails closed, and
+  acceptance checks and connections are verified again. An undo that also
+  restores knowledge behaves as before, and so does an undo finished through
+  history recovery or reconciliation.
 
 ### Upgrade notes
 

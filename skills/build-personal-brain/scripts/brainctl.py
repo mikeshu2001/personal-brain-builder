@@ -1554,6 +1554,7 @@ def cmd_init(args: argparse.Namespace) -> None:
         raise
     state: dict[str, Any]
     target_published = False
+    moved_file_manager_names: list[str] = []
     try:
         shutil.copytree(
             TEMPLATE_ROOT,
@@ -1661,6 +1662,10 @@ def cmd_init(args: argparse.Namespace) -> None:
         state["expected_revision"] = revision
         atomic_write_json(state_path(staging), state)
         if target_was_empty:
+            if not holds_only_file_manager_files(brain_root):
+                raise BrainCtlError(
+                    f"Target must be a new or empty directory: {brain_root}"
+                )
             # A file-manager file in the approved folder moves into the new
             # memory, where the history scan never reads it.
             with os.scandir(brain_root) as leftovers:
@@ -1672,14 +1677,19 @@ def cmd_init(args: argparse.Namespace) -> None:
                 ]
             for name in file_manager_names:
                 os.replace(brain_root / name, staging / name)
+                moved_file_manager_names.append(name)
             brain_root.rmdir()
         os.replace(staging, brain_root)
         target_published = True
     except Exception:
-        if staging.exists():
-            shutil.rmtree(staging)
         if target_was_empty and not brain_root.exists():
             brain_root.mkdir(mode=target_original_mode)
+        # A failed creation leaves the approved folder as it was.
+        for name in moved_file_manager_names:
+            if (staging / name).exists():
+                os.replace(staging / name, brain_root / name)
+        if staging.exists():
+            shutil.rmtree(staging)
         if claim_created_here and not target_published:
             _remove_pointer_claim_if_exact(pointer_path, claim_id=claim_id)
         raise
@@ -4252,29 +4262,37 @@ def _earlier_stage(first: str, second: str) -> str:
     )
 
 
-def revision_changed_paths(brain_root: Path, revision_id: Any) -> list[str] | None:
-    """Return the paths one history revision changed, or None when unknown."""
+def undo_restored_only_operating_files(
+    brain_root: Path,
+    revision_id: str,
+    recorded_head: Any,
+) -> bool:
+    """Return whether one undo brought back operating files and no knowledge.
+
+    True only when the undo was made on top of the head that durable state had
+    recorded and every path it changed lies under system/. An undo made while
+    state lagged behind history, or a history that cannot be read, is False.
+    """
 
     try:
         revisions = history_list_revisions(brain_root)
     except HistoryError:
-        return None
+        return False
     for revision in revisions:
-        if revision.get("id") == revision_id:
-            changed = revision.get("changed_paths")
-            return changed if isinstance(changed, list) else None
-    return None
-
-
-def restored_only_operating_files(changed_paths: Any) -> bool:
-    return (
-        isinstance(changed_paths, list)
-        and bool(changed_paths)
-        and all(
-            isinstance(path, str) and path.startswith("system/")
-            for path in changed_paths
+        if revision.get("id") != revision_id:
+            continue
+        changed = revision.get("changed_paths")
+        return (
+            isinstance(recorded_head, str)
+            and revision.get("parent") == recorded_head
+            and isinstance(changed, list)
+            and bool(changed)
+            and all(
+                isinstance(path, str) and path.startswith("system/")
+                for path in changed
+            )
         )
-    )
+    return False
 
 
 def invalidate_after_history_change(
@@ -4283,7 +4301,7 @@ def invalidate_after_history_change(
     *,
     kind: str,
     issue: str,
-    changed_paths: Any = None,
+    keep_source_reviews: bool = False,
 ) -> None:
     """Move durable workflow state to a safe re-check point after restore/reconcile."""
 
@@ -4314,10 +4332,9 @@ def invalidate_after_history_change(
             state.pop("core_review", None)
             resume_stage = _earlier_stage(resume_stage, "CORE_REVIEW")
 
-    # A restore that touched only system/ brought back operating files and no
-    # knowledge, so reviewed areas and conversation sources keep their coverage.
-    # Unknown paths fall under the blanket rule.
-    if kind == "undo" and not restored_only_operating_files(changed_paths):
+    # An undo that brought back operating files and no knowledge leaves
+    # reviewed areas and conversation sources as they were.
+    if kind == "undo" and not keep_source_reviews:
         areas = state.get("areas", {})
         if isinstance(areas, dict):
             for area in areas.values():
@@ -4462,10 +4479,6 @@ def cmd_history(args: argparse.Namespace) -> None:
                         "An interrupted memory restore was completed. "
                         "Review the restored knowledge before continuing."
                     ),
-                    changed_paths=revision_changed_paths(
-                        brain_root,
-                        recovered["head"],
-                    ),
                 )
             save_state(
                 brain_root,
@@ -4518,7 +4531,6 @@ def cmd_history(args: argparse.Namespace) -> None:
                     "an interrupted state update. Review the affected "
                     "knowledge before continuing."
                 ),
-                changed_paths=reconciliation["changed_paths"],
             )
             save_state(
                 brain_root,
@@ -4569,6 +4581,7 @@ def cmd_history(args: argparse.Namespace) -> None:
     except HistoryError as exc:
         raise BrainCtlError(f"Local history operation failed: {exc}") from exc
 
+    recorded_head = state.get("expected_revision")
     state["expected_revision"] = revision
     invalidate_after_history_change(
         state,
@@ -4578,7 +4591,11 @@ def cmd_history(args: argparse.Namespace) -> None:
             "A previous memory revision was restored. Review the restored "
             "knowledge before continuing."
         ),
-        changed_paths=revision_changed_paths(brain_root, revision),
+        keep_source_reviews=undo_restored_only_operating_files(
+            brain_root,
+            revision,
+            recorded_head,
+        ),
     )
     save_state(
         brain_root,

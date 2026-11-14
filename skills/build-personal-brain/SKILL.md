@@ -573,10 +573,10 @@ reconciliation the tool asks for.
 
 The previous operating files stay in local history. An undo that restores
 only operating files, such as an undo made right after the upgrade, keeps
-reviewed work areas and conversation sources and returns the memory to the
-same recheck point. An undo that also restores knowledge marks every reviewed
-work area and conversation source for a new review; explain that cost before
-offering it.
+reviewed work areas and conversation sources; the memory still fails closed,
+so follow the recheck the tool asks for. An undo that also restores knowledge
+marks every reviewed work area and conversation source for a new review;
+explain that cost before offering it.
 
 ## Pause, recover, or fail closed
 

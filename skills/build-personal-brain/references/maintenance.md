@@ -364,12 +364,13 @@ point.
 
 The previous operating files stay in local history. An undo that changes
 nothing outside `system/`, such as an undo made right after the upgrade,
-keeps reviewed work areas and conversation sources: the memory repeats only
-the acceptance checks and the connection verification. An undo that also
-restores knowledge marks every reviewed work area and conversation source
-for a new review; explain that cost before offering it. An undo to any
-revision saved before the upgrade also brings back the older operating
-files; run the upgrade again afterwards.
+keeps reviewed work areas and conversation sources. The memory still fails
+closed: acceptance checks and connections are verified again. An undo that
+also restores knowledge marks every reviewed work area and conversation
+source for a new review, and so does an undo that had to be finished through
+history recovery or reconciliation; explain that cost before offering it. An
+undo to any revision saved before the upgrade also brings back the older
+operating files; run the upgrade again afterwards.
 
 An upgrade never changes knowledge cards, the owner profile, the index, or
 `START-HERE.md`. Never edit files under `system/` by hand: an unsaved change

@@ -198,6 +198,15 @@ class BrainCtlCliTests(unittest.TestCase):
             encoding="utf-8",
         )
 
+    def load_brainctl(self) -> Any:
+        """Load the control program in this process so one step can be instrumented."""
+
+        spec = importlib.util.spec_from_file_location("brainctl_under_test", BRAINCTL)
+        self.assertIsNotNone(spec)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        return module
+
     @staticmethod
     def valid_rule_bytes(title: str, summary: str, body: str) -> bytes:
         return (
@@ -1879,6 +1888,15 @@ This synthetic card deliberately omits stated provenance.
         )
         self.assertTrue(accepted["ok"])
 
+        module = self.load_brainctl()
+        with self.assertRaises(module.BrainCtlError):
+            module.ensure_record_text_is_safe(
+                {"entry": {"notes": ['api_key="syntheticvalue12345"']}}
+            )
+        module.ensure_record_text_is_safe(
+            {"entry": {"notes": ["Synthetic plain note."]}}
+        )
+
     def test_secret_in_card_body_and_non_markdown_knowledge_are_rejected(self) -> None:
         secret_card = self.brain / "rules" / "blocked-secret.md"
         secret_card.write_bytes(
@@ -2685,6 +2703,80 @@ This synthetic card deliberately omits stated provenance.
         self.assertIn("new or empty directory", refused["error"])
         self.assertTrue((linked / ".DS_Store").is_symlink())
 
+    def test_init_leaves_the_approved_folder_as_it_was_when_creation_fails(
+        self,
+    ) -> None:
+        module = self.load_brainctl()
+        sandbox = self.sandbox.resolve()
+        finder_bytes = b"\x00\x00\x00\x01Bud1\xff"
+
+        def prepared(name: str) -> tuple[Path, Path, argparse.Namespace]:
+            target = sandbox / name
+            target.mkdir()
+            (target / ".DS_Store").write_bytes(finder_bytes)
+            pointer = sandbox / f"{name}-pointer.json"
+            arguments = argparse.Namespace(
+                brain_root=str(target),
+                owner="Synthetic Owner",
+                locale="en",
+                pointer_file=str(pointer),
+                preview_token=self.creation_preview_token(target, pointer),
+                approval_note="Synthetic owner approved this exact private location.",
+            )
+            return target, pointer, arguments
+
+        def setup_leftovers(name: str) -> list[str]:
+            return [
+                path.name
+                for path in sandbox.iterdir()
+                if path.name.startswith(f".{name}.")
+            ]
+
+        # The owner drops a file into the folder while the memory is prepared.
+        target, pointer, arguments = prepared("late-entry")
+        real_initialize = module.history_initialize
+
+        def initialize_then_owner_adds_a_file(*args: Any, **kwargs: Any) -> str:
+            revision = real_initialize(*args, **kwargs)
+            (target / "owner-notes.txt").write_text(
+                "Synthetic owner file.\n",
+                encoding="utf-8",
+            )
+            return revision
+
+        with mock.patch.object(
+            module,
+            "history_initialize",
+            initialize_then_owner_adds_a_file,
+        ):
+            with self.assertRaises(module.BrainCtlError) as refused:
+                module.cmd_init(arguments)
+        self.assertIn("new or empty directory", str(refused.exception))
+        self.assertEqual(
+            sorted(path.name for path in target.iterdir()),
+            [".DS_Store", "owner-notes.txt"],
+        )
+        self.assertEqual((target / ".DS_Store").read_bytes(), finder_bytes)
+        self.assertEqual(setup_leftovers("late-entry"), [])
+        self.assertFalse(pointer.exists())
+
+        # The final rename fails after the file-manager file was moved aside.
+        target, pointer, arguments = prepared("rename-fails")
+        real_replace = os.replace
+
+        def replace(source: Any, destination: Any, *args: Any, **kwargs: Any) -> None:
+            if Path(destination) == target:
+                raise PermissionError(13, "synthetic rename failure", str(destination))
+            real_replace(source, destination, *args, **kwargs)
+
+        with mock.patch.object(module.os, "replace", replace):
+            with self.assertRaises(PermissionError):
+                module.cmd_init(arguments)
+        self.assertEqual([path.name for path in target.iterdir()], [".DS_Store"])
+        self.assertEqual((target / ".DS_Store").read_bytes(), finder_bytes)
+        self.assertEqual(setup_leftovers("rename-fails"), [])
+        self.assertFalse(pointer.exists())
+
     def test_connect_remove_clears_the_record_when_the_block_is_already_gone(
         self,
     ) -> None:
@@ -3259,15 +3351,30 @@ This synthetic card deliberately omits stated provenance.
         mismatch = self.upgrade_preview(newer, expected_returncode=2)
         self.assertIn("history reconciliation", mismatch["error"])
 
-    def test_undo_of_an_upgrade_keeps_reviewed_areas_and_a_knowledge_undo_does_not(
-        self,
-    ) -> None:
+    def save_for_undo_test(self, path: str, summary: str) -> str:
+        saved, _ = self.run_brainctl(
+            "save",
+            "--brain-root",
+            str(self.brain),
+            "--paths",
+            path,
+            "--summary",
+            summary,
+            "--reason",
+            "prepare the synthetic undo scenario",
+        )
+        return saved["revision"]
+
+    def record_reviewed_area(self) -> str:
+        """Record one content-reviewed area and return its journal revision."""
+
         source = self.sandbox / "reviewed-source"
         source.mkdir()
         (source / "notes.txt").write_text(
             "Synthetic reviewed content.\n",
             encoding="utf-8",
         )
+        self.set_stage_for_test("MAP_PERMISSION")
         self.approve("metadata-map", source)
         self.set_stage_for_test("DEEP_AUDIT_GATE")
         self.approve("content-audit", source)
@@ -3305,22 +3412,7 @@ This synthetic card deliberately omits stated provenance.
             "No durable source facts were found in this synthetic area.\n",
             encoding="utf-8",
         )
-
-        def save(path: str, summary: str) -> str:
-            saved, _ = self.run_brainctl(
-                "save",
-                "--brain-root",
-                str(self.brain),
-                "--paths",
-                path,
-                "--summary",
-                summary,
-                "--reason",
-                "prepare the synthetic undo scenario",
-            )
-            return saved["revision"]
-
-        journal_revision = save(
+        journal_revision = self.save_for_undo_test(
             "journal/2026-07-23-reviewed-area.md",
             "record the synthetic area review",
         )
@@ -3352,45 +3444,59 @@ This synthetic card deliberately omits stated provenance.
             "--saved-revision",
             journal_revision,
         )
+        return journal_revision
+
+    def undo_to(self, revision: str) -> dict[str, Any]:
+        preview, _ = self.run_brainctl(
+            "history",
+            "undo-preview",
+            "--brain-root",
+            str(self.brain),
+            "--to-revision",
+            revision,
+        )
+        self.run_brainctl(
+            "history",
+            "undo",
+            "--brain-root",
+            str(self.brain),
+            "--to-revision",
+            revision,
+            "--token",
+            preview["token"],
+            "--reason",
+            "exercise the synthetic undo scenario",
+        )
+        return self.saved_state()
+
+    def test_undo_of_an_upgrade_keeps_reviewed_areas_and_a_knowledge_undo_does_not(
+        self,
+    ) -> None:
+        self.record_reviewed_area()
         card = self.brain / "rules" / "undo-control.md"
         card.write_bytes(
             self.valid_rule_bytes("Undo control", "First version", "First body.")
         )
-        first_card_revision = save("rules/undo-control.md", "save the first version")
+        first_card_revision = self.save_for_undo_test(
+            "rules/undo-control.md",
+            "save the first version",
+        )
         card.write_bytes(
             self.valid_rule_bytes("Undo control", "Second version", "Second body.")
         )
-        before_upgrade = save("rules/undo-control.md", "save the second version")
-
+        before_upgrade = self.save_for_undo_test(
+            "rules/undo-control.md",
+            "save the second version",
+        )
         newer = self.newer_builder()
-        self.upgrade_apply(newer, self.upgrade_preview(newer)["confirmation_token"])
+        upgraded = self.upgrade_apply(
+            newer,
+            self.upgrade_preview(newer)["confirmation_token"],
+        )
         contract = self.brain / self.CONTRACT_PATH
         self.assertIn(self.NEWER_CONTRACT_RULE, contract.read_text(encoding="utf-8"))
 
-        def undo_to(revision: str) -> dict[str, Any]:
-            preview, _ = self.run_brainctl(
-                "history",
-                "undo-preview",
-                "--brain-root",
-                str(self.brain),
-                "--to-revision",
-                revision,
-            )
-            self.run_brainctl(
-                "history",
-                "undo",
-                "--brain-root",
-                str(self.brain),
-                "--to-revision",
-                revision,
-                "--token",
-                preview["token"],
-                "--reason",
-                "exercise the synthetic undo scenario",
-            )
-            return self.saved_state()
-
-        after_upgrade_undo = undo_to(before_upgrade)
+        after_upgrade_undo = self.undo_to(before_upgrade)
         self.assertNotIn(
             self.NEWER_CONTRACT_RULE,
             contract.read_text(encoding="utf-8"),
@@ -3402,13 +3508,110 @@ This synthetic card deliberately omits stated provenance.
             "content-reviewed",
         )
 
-        after_knowledge_undo = undo_to(first_card_revision)
+        after_return_to_upgrade = self.undo_to(upgraded["revision"])
+        self.assertIn(self.NEWER_CONTRACT_RULE, contract.read_text(encoding="utf-8"))
+        self.assertEqual(
+            after_return_to_upgrade["areas"]["reviewed-area"]["coverage"],
+            "content-reviewed",
+        )
+
+        after_mixed_undo = self.undo_to(first_card_revision)
+        self.assertNotIn(
+            self.NEWER_CONTRACT_RULE,
+            contract.read_text(encoding="utf-8"),
+        )
         self.assertIn("First body.", card.read_text(encoding="utf-8"))
         self.assertEqual(
-            after_knowledge_undo["areas"]["reviewed-area"]["coverage"],
+            after_mixed_undo["areas"]["reviewed-area"]["coverage"],
             "needs-recheck",
         )
-        self.assertEqual(after_knowledge_undo["failed_from"], "CONTOUR_LOOP")
+        self.assertEqual(after_mixed_undo["failed_from"], "CONTOUR_LOOP")
+
+    def test_undo_made_while_state_lags_behind_history_marks_reviewed_areas(
+        self,
+    ) -> None:
+        created = self.saved_state()["expected_revision"]
+        newer = self.newer_builder()
+        upgraded = self.upgrade_apply(
+            newer,
+            self.upgrade_preview(newer)["confirmation_token"],
+        )
+        journal_revision = self.record_reviewed_area()
+        self.assertEqual(self.saved_state()["expected_revision"], journal_revision)
+
+        # A knowledge undo reaches history, but its state update is lost.
+        preview = portable_history.undo_preview(self.brain, upgraded["revision"])
+        portable_history.undo_apply(
+            self.brain,
+            upgraded["revision"],
+            preview["token"],
+            "synthetic interrupted undo",
+        )
+        journal = self.brain / "journal" / "2026-07-23-reviewed-area.md"
+        self.assertFalse(journal.exists())
+        self.assertEqual(self.saved_state()["expected_revision"], journal_revision)
+
+        # The next undo differs from the unrecorded head only under system/.
+        after = self.undo_to(created)
+        self.assertEqual(
+            after["areas"]["reviewed-area"]["coverage"],
+            "needs-recheck",
+        )
+
+    def test_history_invalidation_treats_areas_and_conversation_sources_alike(
+        self,
+    ) -> None:
+        module = self.load_brainctl()
+
+        def reviewed_state() -> dict[str, Any]:
+            return {
+                "state": "CONSOLIDATION",
+                "checks": {"synthetic-check": {"status": "pass"}},
+                "connections": {},
+                "areas": {
+                    "synthetic-area": {
+                        "coverage": "content-reviewed",
+                        "execution": "closed",
+                    }
+                },
+                "session_history": {
+                    "synthetic-source": {
+                        "coverage": "distillates-reviewed",
+                        "execution": "closed",
+                    }
+                },
+            }
+
+        kept = reviewed_state()
+        module.invalidate_after_history_change(
+            kept,
+            self.brain,
+            kind="undo",
+            issue="Synthetic operating-file undo.",
+            keep_source_reviews=True,
+        )
+        self.assertEqual(kept["state"], "FAILED_CLOSED")
+        self.assertEqual(kept["checks"], {})
+        self.assertEqual(kept["failed_from"], "CONSOLIDATION")
+        self.assertEqual(kept["areas"]["synthetic-area"]["coverage"], "content-reviewed")
+        self.assertEqual(
+            kept["session_history"]["synthetic-source"]["coverage"],
+            "distillates-reviewed",
+        )
+
+        marked = reviewed_state()
+        module.invalidate_after_history_change(
+            marked,
+            self.brain,
+            kind="undo",
+            issue="Synthetic knowledge undo.",
+        )
+        self.assertEqual(marked["areas"]["synthetic-area"]["coverage"], "needs-recheck")
+        self.assertEqual(
+            marked["session_history"]["synthetic-source"]["coverage"],
+            "needs-recheck",
+        )
+        self.assertEqual(marked["failed_from"], "CONTOUR_LOOP")
 
     def test_upgrade_writer_stays_inside_the_memory_and_out_of_tracked_folders(
         self,
