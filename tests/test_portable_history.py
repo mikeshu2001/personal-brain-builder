@@ -156,6 +156,53 @@ class PortableHistoryTests(unittest.TestCase):
             history._canonical_bytes(parsed_revision) + b"\n",
         )
 
+    def test_file_manager_metadata_is_never_a_memory_change(self) -> None:
+        self.initialize()
+        (self.root / "rules").mkdir()
+        for name in (".DS_Store", "rules/.DS_Store", "rules/Thumbs.db", "desktop.ini"):
+            (self.root / name).write_bytes(b"\x00\x00\x00\x01Bud1\xff")
+        self.assertTrue(history.inspect(self.root)["clean"])
+
+        (self.root / "rules" / "kept.md").write_bytes(b"# Kept\n")
+        self.assertEqual(history.changed_paths(self.root), ["rules/kept.md"])
+        history.save(
+            self.root,
+            expected_paths=["rules/kept.md"],
+            summary="Save one card beside file-manager metadata",
+            reason="Only the card belongs to the memory",
+        )
+        self.assertTrue(history.inspect(self.root)["clean"])
+
+    def test_metadata_file_listed_by_an_older_revision_does_not_block_the_tree(
+        self,
+    ) -> None:
+        (self.root / ".DS_Store").write_bytes(b"listed by an older scan")
+        # A revision written before these names were skipped may list one.
+        with mock.patch.object(history, "is_os_metadata_name", return_value=False):
+            first = self.initialize()
+        self.assertTrue(history.inspect(self.root)["clean"])
+
+        # The file manager keeps rewriting its file; the memory moves on.
+        (self.root / ".DS_Store").write_bytes(b"rewritten by the file manager")
+        (self.root / "profile" / "later.md").write_bytes(b"# Later\n")
+        history.save(
+            self.root,
+            expected_paths=["profile/later.md"],
+            summary="Save one card on top of the older revision",
+            reason="The listed metadata file must not break the chain",
+        )
+        self.assertTrue(history.inspect(self.root)["clean"])
+        self.assertEqual(len(history.list_revisions(self.root)), 2)
+
+        preview = history.undo_preview(self.root, first)
+        self.assertEqual(preview["changes"]["deleted"], ["profile/later.md"])
+        history.undo_apply(self.root, first, preview["token"], "restore the first state")
+        self.assertTrue(history.inspect(self.root)["clean"])
+        self.assertFalse(history.recovery_preview(self.root)["needed"])
+
+        (self.root / ".DS_Store").unlink()
+        self.assertTrue(history.inspect(self.root)["clean"])
+
     def test_save_requires_an_exact_safe_path_set(self) -> None:
         initial_revision = self.initialize()
         (self.root / "profile" / "owner.md").write_bytes(b"name: Changed\n")

@@ -474,11 +474,15 @@ workflow, not a normal backup, save, or undo.
 
 - **Entry:** handoff is complete.
 - **Actions:** use the runtime retrieval and explicit-write submachines below.
-  Offer health checks, open-conflict review, connection removal, scoped
-  re-audits, and an operating-file upgrade when requested.
+  Offer health checks, open-conflict review, connection removal, another
+  assistant connection, and an operating-file upgrade when requested. A new
+  work folder has no supported path after handoff.
 - **Outputs:** normal memory-assisted work.
 - **Exit:** remain `READY` unless an authorized maintenance operation enters
-  a dedicated substate.
+  a dedicated substate. An explicit request to connect or repair an
+  assistant reopens `CONNECTION_REVIEW`; the memory must validate and be
+  clean, and it returns through acceptance, the recovery-copy review, and
+  handoff with its recorded acceptance results.
 - **Resume:** start every invocation at `DISCOVER_OR_RESUME`.
 - **Fail closed:** ordinary conversation never authorizes automatic memory
   writes.

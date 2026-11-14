@@ -93,6 +93,7 @@ corresponding work:
 | Fresh-conversation and recovery tests | `acceptance-tests.md`, `safety-rules.md` |
 | Ready-memory retrieval or explicit changes | `maintenance.md`, generated memory's `system/runner-contract.md` |
 | Updating a memory built with an older builder | `maintenance.md`, `state-machine.md`, `user-dialogue.md` |
+| Connecting or repairing an assistant after handoff | `connection-protocol.md`, `maintenance.md`, `safety-rules.md` |
 
 Read each selected reference completely. Do not load unrelated references
 merely because they exist.
@@ -471,6 +472,42 @@ token. Never guess between ambiguous histories.
 
 The owner's current instruction always wins over stored memory.
 
+## Connect another assistant to a finished memory
+
+When the owner asks to connect another assistant, or validation reports that
+a connected instruction file changed after connection, reopen connection
+review. The memory must pass validation and have no unsaved changes:
+
+```bash
+python3 -B "/exact/path/to/this-skill/scripts/brainctl.py" state \
+  --brain-root "/memory" --stage CONNECTION_REVIEW \
+  --next-action "Review the requested assistant connection"
+```
+
+Then follow `Connect selected assistants` for that one exact target and verify
+it in a fresh conversation. Assistants that are already verified stay as they
+are. Return to the finished state without repeating the acceptance checks:
+
+```bash
+python3 -B "/exact/path/to/this-skill/scripts/brainctl.py" state \
+  --brain-root "/memory" --stage ACCEPTANCE_TESTING \
+  --next-action "Confirm every selected connection is verified"
+```
+
+Continue through `RECOVERY_COPY_REVIEW`, `HANDOFF`, and `READY` with the same
+command. The transition to recovery review is refused while any selected
+connection is unverified. If the owner changes their mind about a target that
+is still pending, record it with `--selected no` before returning.
+
+For an instruction file that was edited after connection, first remove that
+connection with `connect remove-preview` and `connect remove` while the
+memory is still `READY`, then reopen connection review and connect it again.
+If the block itself was deleted from the file, the removal reports
+`already-removed` and clears the stale connection record.
+
+Adding a new work folder to a finished memory has no supported path yet. Say
+so plainly instead of improvising one.
+
 ## Upgrade an existing memory
 
 A finished memory keeps its own copy of the runner contract, the connection
@@ -493,7 +530,8 @@ python3 -B "/exact/path/to/this-skill/scripts/brainctl.py" upgrade preview \
 If the preview refuses because the memory fails validation, repair that
 first. The usual cause is an assistant instruction file edited after
 connection: remove that connection through the reviewed removal flow, run the
-upgrade, and connect the assistant again during the recheck.
+upgrade, and connect the assistant again during the recheck. File-manager
+files such as `.DS_Store` are ignored and need no cleanup.
 
 Show both versions and the listed files. Use `CHANGELOG.md` at the builder
 root to say in ordinary words what changes. Explain that knowledge cards and
